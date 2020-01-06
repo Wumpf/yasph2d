@@ -65,6 +65,14 @@ impl EventHandler for MainState {
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, [0.1, 0.2, 0.3, 1.0].into());
 
+        let fps = timer::fps(ctx);
+        let fps_display = graphics::Text::new(format!("{:.2}ms, FPS: {:.2}", 1000.0 / fps, fps));
+        graphics::draw(
+            ctx,
+            &fps_display,
+            (na::Point2::new(10.0, 10.0), graphics::WHITE),
+        )?;
+
         let circle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), 5.0, 1.0, graphics::WHITE)?;
         for p in self.particles.positions.iter() {
             graphics::draw(ctx, &circle, ggez::graphics::DrawParam::default().dest(*p))?;
