@@ -2,6 +2,9 @@ use ggez::event::{self, EventHandler};
 use ggez::nalgebra as na;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
+mod hydroparticles;
+use hydroparticles::*;
+
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
         .window_setup(conf::WindowSetup::default()
@@ -13,40 +16,14 @@ fn main() -> GameResult {
     event::run(ctx, event_loop, state)
 }
 
-struct HydroParticles {
-    positions: Vec<na::Point2<f32>>,
-}
-
 struct MainState {
     particles: HydroParticles, // box?
 }
 
 impl MainState {
     pub fn new(_ctx: &mut Context) -> MainState {
-        let num_x = 40;
-        let num_y = 20;
-        let num_particles = num_x * num_y;
-
-        let mut state = MainState {
-            particles: HydroParticles {
-                positions: Vec::with_capacity(num_particles),
-            },
-        };
-
-        let dist = 10.0;
-        for y in 0..num_y {
-            for x in 0..num_x {
-                //let i = x + y * num_x;
-                state.particles.positions.push(na::Point2::new(dist * (x as f32), dist * (y as f32)));
-            }
-        }
-
-        state
-    }
-
-    pub fn physics_step(&mut self, dt: f32) {
-        for pos in &mut self.particles.positions {
-            pos.x += dt * 100.0;
+        MainState {
+            particles: HydroParticles::new(40, 20)
         }
     }
 }
@@ -57,7 +34,7 @@ impl EventHandler for MainState {
         const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
 
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
-            self.physics_step(TIME_STEP);
+            self.particles.physics_step(TIME_STEP);
         }
         Ok(())
     }
