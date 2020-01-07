@@ -29,7 +29,11 @@ impl MainState {
         MainState {
             particles: HydroParticles::new(40, 20),
             camera: Camera {
+            camera: Camera {
                 screen: graphics::screen_coordinates(ctx),
+                pixel_per_world_unit: 10.0,
+                position: Position::origin(),
+            },
                 pixel_per_world_unit: 10.0,
                 position: Position::origin(),
             },
