@@ -1,4 +1,5 @@
 use ggez::event::{self, EventHandler};
+use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
@@ -8,7 +9,6 @@ mod units;
 
 use camera::*;
 use hydroparticles::*;
-use units::*;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
@@ -28,15 +28,7 @@ impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         MainState {
             particles: HydroParticles::new(40, 20),
-            camera: Camera {
-            camera: Camera {
-                screen: graphics::screen_coordinates(ctx),
-                pixel_per_world_unit: 10.0,
-                position: Position::origin(),
-            },
-                pixel_per_world_unit: 10.0,
-                position: Position::origin(),
-            },
+            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-5.0, -5.0, 60.0, 60.0)),
         }
     }
 }
@@ -56,8 +48,12 @@ impl EventHandler for MainState {
         graphics::clear(ctx, [0.1, 0.2, 0.3, 1.0].into());
 
         let fps = timer::fps(ctx);
+
         let fps_display = graphics::Text::new(format!("{:.2}ms, FPS: {:.2}", 1000.0 / fps, fps));
         graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
+
+        graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
+        graphics::apply_transformations(ctx)?;
 
         let circle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), 0.5, 0.1, graphics::WHITE)?;
         for p in self.particles.positions.iter() {
@@ -65,10 +61,14 @@ impl EventHandler for MainState {
                 ctx,
                 &circle,
                 ggez::graphics::DrawParam::default()
-                    .scale(self.camera.world_unit_scale())
-                    .dest(self.camera.world_to_screen_coords(*p)),
+                .dest(*p)
+                //    .scale(self.camera.world_unit_scale())
+                //    .dest(self.camera.world_to_screen_coords(*p)),
             )?;
         }
+
+        graphics::pop_transform(ctx);
+        graphics::apply_transformations(ctx)?;
 
         graphics::present(ctx)?;
         Ok(())

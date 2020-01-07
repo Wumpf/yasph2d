@@ -1,6 +1,6 @@
 use super::units::*;
-use ggez::nalgebra as na;
 use ggez::graphics::Rect;
+use ggez::nalgebra as na;
 
 // A 2D camera.
 // Maps 2D world coordinates/sizes to screen coordinates/sizes.
@@ -9,13 +9,12 @@ use ggez::graphics::Rect;
 // This camera does not allow for non-uniform scaling.
 #[derive(PartialEq, Debug)]
 pub struct Camera {
-    pub screen: Rect, // Screen rectangle
+    pub screen: Rect,              // Screen rectangle
     pub pixel_per_world_unit: f32, // Scaling/Zoom factor of the camera ()
-    pub position: Position, // The position of this camera in world space, i.e. the middle of the view.
+    pub position: Position,        // The position of this camera in world space, i.e. the middle of the view.
 }
 
 impl Camera {
-    // todo: ensure that a given rectangle of world units is visible
     pub fn center_around_world_rect(screen: Rect, world_rect_to_fit: Rect) -> Camera {
         let screen_extent = Size::new(screen.w, screen.h.abs());
         let world_extent = Size::new(world_rect_to_fit.w, world_rect_to_fit.h);
@@ -32,19 +31,44 @@ impl Camera {
         }
     }
 
+    #[allow(dead_code)]
     pub fn world_unit_scale(&self) -> Size {
         Size::new(self.pixel_per_world_unit, self.pixel_per_world_unit)
     }
 
+    #[allow(dead_code)]
     pub fn world_to_screen_coords(&self, world_pos: Position) -> Position {
         let from_camera = world_pos - self.position;
         let view_scale = from_camera * self.pixel_per_world_unit;
 
-        assert!(self.screen.w > 0.0 && self.screen.h > 0.0);
-
         Position::new(
             self.screen.x + view_scale.x + self.screen.w * 0.5,
             self.screen.y - view_scale.y + self.screen.h * 0.5,
+        )
+    }
+
+    pub fn transformation_matrix(&self) -> na::Matrix4<f32> {
+        let scaling = na::Vector2::new(self.pixel_per_world_unit, -self.pixel_per_world_unit);
+        let translation = na::Vector2::new(self.screen.x, self.screen.y) + na::Vector2::new(self.screen.w, self.screen.h) * 0.5
+            - self.position.coords.component_mul(&scaling);
+
+        na::Matrix4::new(
+            scaling.x,
+            0.0,
+            0.0,
+            translation.x,
+            0.0,
+            scaling.y,
+            0.0,
+            translation.y,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
         )
     }
 }
@@ -58,11 +82,14 @@ mod tests {
         let screen = Rect::new(321.0, 123.0, 200.0, 100.0);
         let world = Rect::new(10.0, 10.0, 20.0, 40.0);
         let camera = Camera::center_around_world_rect(screen, world);
-        assert_eq!(Camera {
-            screen: Rect::new(321.0, 123.0, 200.0, 100.0),
-            pixel_per_world_unit: 2.5,
-            position: Position::new(20.0, 30.0),
-        }, camera);
+        assert_eq!(
+            Camera {
+                screen: Rect::new(321.0, 123.0, 200.0, 100.0),
+                pixel_per_world_unit: 2.5,
+                position: Position::new(20.0, 30.0),
+            },
+            camera
+        );
     }
 
     #[test]
