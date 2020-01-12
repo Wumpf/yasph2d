@@ -27,12 +27,18 @@ struct MainState {
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
-        let mut particles = HydroParticles::new(40, 20, 0.5);
-        particles.add_boundary_line(Position::new(0.0, 0.0), Position::new(30.0, 0.0));
+        let mut particles = HydroParticles::new(0.05,  // smoothing length
+            1000.0, // #particles/m²
+            1000.0, // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
+        );
+        particles.add_fluid_rect(&Rect::new(0.2, 0.2, 0.6, 0.6));
+        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
+        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(0.0, 0.75));
+        particles.add_boundary_line(&Position::new(1.0, 0.0), &Position::new(1.0, 0.75));
 
         MainState {
             particles: particles,
-            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-5.0, -5.0, 60.0, 60.0)),
+            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.1, 1.1)),
         }
     }
 }
@@ -59,7 +65,9 @@ impl EventHandler for MainState {
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
-        let particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), self.particles.smoothing_length, 0.1, graphics::WHITE)?;
+        let particle_radius = self.particles.suggested_particle_render_radius();
+        let particle          = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), particle_radius, 0.0005, graphics::WHITE)?;
+        let boundary_particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), particle_radius, 0.0005, graphics::BLACK)?;
         for p in self.particles.positions.iter() {
             graphics::draw(
                 ctx,
@@ -68,7 +76,6 @@ impl EventHandler for MainState {
                 .dest(*p)
             )?;
         }
-        let boundary_particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), self.particles.smoothing_length, 0.1, graphics::BLACK)?;
         for p in self.particles.boundary_particles.iter() {
             graphics::draw(
                 ctx,
