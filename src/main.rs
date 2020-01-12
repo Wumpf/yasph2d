@@ -9,6 +9,7 @@ mod units;
 
 use camera::*;
 use hydroparticles::*;
+use units::*;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
@@ -20,14 +21,17 @@ fn main() -> GameResult {
 }
 
 struct MainState {
-    particles: HydroParticles, // box?
+    particles: HydroParticles,
     camera: Camera,
 }
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
+        let mut particles = HydroParticles::new(40, 20, 0.5);
+        particles.add_boundary_line(Position::new(0.0, 0.0), Position::new(30.0, 0.0));
+
         MainState {
-            particles: HydroParticles::new(40, 20),
+            particles: particles,
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-5.0, -5.0, 60.0, 60.0)),
         }
     }
@@ -55,15 +59,22 @@ impl EventHandler for MainState {
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
-        let circle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), 0.5, 0.1, graphics::WHITE)?;
+        let particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), self.particles.smoothing_length, 0.1, graphics::WHITE)?;
         for p in self.particles.positions.iter() {
             graphics::draw(
                 ctx,
-                &circle,
+                &particle,
                 ggez::graphics::DrawParam::default()
                 .dest(*p)
-                //    .scale(self.camera.world_unit_scale())
-                //    .dest(self.camera.world_to_screen_coords(*p)),
+            )?;
+        }
+        let boundary_particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), self.particles.smoothing_length, 0.1, graphics::BLACK)?;
+        for p in self.particles.boundary_particles.iter() {
+            graphics::draw(
+                ctx,
+                &boundary_particle,
+                ggez::graphics::DrawParam::default()
+                .dest(*p)
             )?;
         }
 
