@@ -5,6 +5,7 @@ use ggez::{conf, graphics, timer, Context, GameResult};
 
 mod camera;
 mod hydroparticles;
+mod smoothing_kernel;
 mod units;
 
 use camera::*;
@@ -27,11 +28,12 @@ struct MainState {
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
-        let mut particles = HydroParticles::new(0.05,  // smoothing length
+        let mut particles = HydroParticles::new(
+            0.05,   // smoothing length
             1000.0, // #particles/m²
             1000.0, // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
-        particles.add_fluid_rect(&Rect::new(0.2, 0.2, 0.6, 0.6));
+        particles.add_fluid_rect(&Rect::new(0.2, 0.4, 0.6, 0.6));
         particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
         particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(0.0, 0.75));
         particles.add_boundary_line(&Position::new(1.0, 0.0), &Position::new(1.0, 0.75));
@@ -45,7 +47,7 @@ impl MainState {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 60;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 120;
         const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
 
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
@@ -66,23 +68,27 @@ impl EventHandler for MainState {
         graphics::apply_transformations(ctx)?;
 
         let particle_radius = self.particles.suggested_particle_render_radius();
-        let particle          = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), particle_radius, 0.0005, graphics::WHITE)?;
-        let boundary_particle = graphics::Mesh::new_circle(ctx, graphics::DrawMode::fill(), na::Point2::new(0.0, 0.0), particle_radius, 0.0005, graphics::BLACK)?;
+        let particle = graphics::Mesh::new_circle(
+            ctx,
+            graphics::DrawMode::fill(),
+            na::Point2::new(0.0, 0.0),
+            particle_radius,
+            0.0005,
+            graphics::WHITE,
+        )?;
+        let boundary_particle = graphics::Mesh::new_circle(
+            ctx,
+            graphics::DrawMode::fill(),
+            na::Point2::new(0.0, 0.0),
+            particle_radius,
+            0.0005,
+            graphics::BLACK,
+        )?;
         for p in self.particles.positions.iter() {
-            graphics::draw(
-                ctx,
-                &particle,
-                ggez::graphics::DrawParam::default()
-                .dest(*p)
-            )?;
+            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p))?;
         }
         for p in self.particles.boundary_particles.iter() {
-            graphics::draw(
-                ctx,
-                &boundary_particle,
-                ggez::graphics::DrawParam::default()
-                .dest(*p)
-            )?;
+            graphics::draw(ctx, &boundary_particle, ggez::graphics::DrawParam::default().dest(*p))?;
         }
 
         graphics::pop_transform(ctx);
