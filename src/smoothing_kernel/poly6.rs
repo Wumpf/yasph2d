@@ -34,7 +34,7 @@ impl Kernel for Poly6 {
     fn gradient(&self, distance_sq: f32) -> f32 {
         if distance_sq <= self.hsq {
             let dsq = self.hsq - distance_sq;
-            self.normalizer_grad * dsq * dsq
+            self.normalizer_grad * dsq * dsq * distance_sq.sqrt()
         } else {
             0.0
         }
