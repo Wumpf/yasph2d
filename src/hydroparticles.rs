@@ -29,12 +29,13 @@ pub struct HydroParticles {
 
 impl HydroParticles {
     pub fn new(
-        smoothing_length: f32,
+        smoothing_factor: f32,
         particle_density: f32, // #particles/m² for resting fluid
         fluid_density: f32,    // kg/m² for the resting fluid
         fluid_machnumber: f32, // speed of sound in this fluid
         fluid_viscosity: f32,  // the dynamic viscosity of this fluid in Pa*s (μ, mu)
     ) -> HydroParticles {
+        let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
         HydroParticles {
             positions: Vec::new(),
             velocities: Vec::new(),
@@ -50,7 +51,7 @@ impl HydroParticles {
             pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
             viscosity_kernel: smoothing_kernel::Viscosity::new(smoothing_length),
 
-            boundary_force_factor: 10.0,  // (expected accelleration) / (spacing ratio of boundary / normal particles)
+            boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
 
             densities: Vec::new(),
             forces: Vec::new(),
@@ -67,12 +68,17 @@ impl HydroParticles {
         self.fluid_machnumber_sq * (local_density - self.fluid_density)
     }
 
+    fn particle_radius_from_particle_density(particle_density: f32) -> f32 {
+        // density is per m²
+        0.5 / particle_density.sqrt()
+    }
+
     fn num_particles_per_meter(&self) -> f32 {
         self.particle_density.sqrt()
     }
 
     pub fn suggested_particle_render_radius(&self) -> f32 {
-        0.5 / self.num_particles_per_meter()
+        Self::particle_radius_from_particle_density(self.particle_density)
     }
 
     pub fn add_fluid_rect(&mut self, fluid_rect: &Rect) {

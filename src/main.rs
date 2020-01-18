@@ -35,8 +35,8 @@ struct MainState {
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut particles = HydroParticles::new(
-            0.05,   // smoothing length
-            1000.0, // #particles/m²
+            1.2,    // smoothing factor
+            2000.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
             0.5,    //1500.0, // speed of sound in water in m/s
             0.5,    //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
@@ -102,7 +102,7 @@ impl EventHandler for MainState {
             graphics::DrawMode::fill(),
             na::Point2::new(0.0, 0.0),
             particle_radius,
-            0.0005,
+            0.0003,
             graphics::WHITE,
         )?;
         let boundary_color = graphics::Color {
@@ -111,24 +111,12 @@ impl EventHandler for MainState {
             b: 0.2,
             a: 1.0,
         };
-        let boundary_particle = graphics::Mesh::new_circle(
-            ctx,
-            graphics::DrawMode::fill(),
-            na::Point2::new(0.0, 0.0),
-            particle_radius,
-            0.0005,
-            boundary_color,
-        )?;
         for (p, f) in self.particles.positions.iter().zip(self.particles.forces.iter()) {
             let c = heatmap_color(f.norm() / self.particles.particle_mass());
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(c))?;
         }
         for p in self.particles.boundary_particles.iter() {
-            graphics::draw(
-                ctx,
-                &boundary_particle,
-                ggez::graphics::DrawParam::default().dest(*p),
-            )?;
+            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(boundary_color))?;
         }
 
         graphics::pop_transform(ctx);
