@@ -3,6 +3,8 @@ use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
+use na::clamp;
+
 use std::time::{Duration, Instant};
 
 mod camera;
@@ -53,6 +55,15 @@ impl MainState {
     }
 }
 
+fn heatmap_color(t: f32) -> graphics::Color {
+    graphics::Color {
+        r: clamp(t * 3.0, 0.0, 1.0),
+        g: clamp(t * 3.0 - 1.0, 0.0, 1.0),
+        b: clamp(t * 3.0 - 2.0, 0.0, 1.0),
+        a: 1.0,
+    }
+}
+
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         const DESIRED_UPDATES_PER_SECOND: u32 = 240;
@@ -69,7 +80,7 @@ impl EventHandler for MainState {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        graphics::clear(ctx, [0.1, 0.2, 0.3, 1.0].into());
+        graphics::clear(ctx, [0.4, 0.4, 0.45, 1.0].into());
 
         let fps = timer::fps(ctx);
 
@@ -94,26 +105,30 @@ impl EventHandler for MainState {
             0.0005,
             graphics::WHITE,
         )?;
+        let boundary_color = graphics::Color {
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+            a: 1.0,
+        };
         let boundary_particle = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
             na::Point2::new(0.0, 0.0),
             particle_radius,
             0.0005,
-            graphics::BLACK,
+            boundary_color,
         )?;
         for (p, f) in self.particles.positions.iter().zip(self.particles.forces.iter()) {
-            let c = f.norm() / self.particles.particle_mass();
-            graphics::draw(
-                ctx,
-                &particle,
-                ggez::graphics::DrawParam::default()
-                    .dest(*p)
-                    .color(graphics::Color { r: c, g: c, b: c, a: 1.0 }),
-            )?;
+            let c = heatmap_color(f.norm() / self.particles.particle_mass());
+            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(c))?;
         }
         for p in self.particles.boundary_particles.iter() {
-            graphics::draw(ctx, &boundary_particle, ggez::graphics::DrawParam::default().dest(*p))?;
+            graphics::draw(
+                ctx,
+                &boundary_particle,
+                ggez::graphics::DrawParam::default().dest(*p),
+            )?;
         }
 
         graphics::pop_transform(ctx);
