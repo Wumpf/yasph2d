@@ -1,5 +1,5 @@
 use super::kernel::Kernel;
-use crate::units::{Direction, Real};
+use crate::units::{Real, Vector};
 
 /// Viscosity smoothing kernel.
 ///
@@ -32,7 +32,7 @@ impl Kernel for Viscosity {
     }
 
     #[inline]
-    fn gradient(&self, _ri_to_rj: Direction, _r_sq: Real, _r: Real) -> Direction {
+    fn gradient(&self, _ri_to_rj: Vector, _r_sq: Real, _r: Real) -> Vector {
         unimplemented!();
     }
 

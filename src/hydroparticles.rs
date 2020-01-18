@@ -6,34 +6,34 @@ use crate::smoothing_kernel;
 use crate::smoothing_kernel::Kernel;
 
 pub struct HydroParticles {
-    pub positions: Vec<Position>,
-    pub velocities: Vec<Velocity>,
-    pub accellerations: Vec<Velocity>,
+    pub positions: Vec<Point>,
+    pub velocities: Vec<Vector>,
+    pub accellerations: Vec<Vector>,
 
-    pub boundary_particles: Vec<Position>, // also called "shadow particles", immovable particles used for boundaries
+    pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
 
-    smoothing_length_sq: f32, // typically expressed as 'h'
-    particle_density: f32,    // #particles/m² for resting fluid
-    fluid_density: f32,       // kg/m² for the resting fluid (ρ, rho)
-    fluid_machnumber_sq: f32, // speed of sound in this fluid squared
-    fluid_viscosity: f32,     // the dynamic viscosity of this fluid in Pa*s (μ, mu)
+    smoothing_length_sq: Real, // typically expressed as 'h'
+    particle_density: Real,    // #particles/m² for resting fluid
+    fluid_density: Real,       // kg/m² for the resting fluid (ρ, rho)
+    fluid_machnumber_sq: Real, // speed of sound in this fluid squared
+    fluid_viscosity: Real,     // the dynamic viscosity of this fluid in Pa*s (μ, mu)
 
     density_kernel: smoothing_kernel::Poly6,
     pressure_kernel: smoothing_kernel::Spiky,
     viscosity_kernel: smoothing_kernel::Viscosity,
 
-    boundary_force_factor: f32,
+    boundary_force_factor: Real,
 
-    densities: Vec<f32>, // Local densities ρ
+    densities: Vec<Real>, // Local densities ρ
 }
 
 impl HydroParticles {
     pub fn new(
-        smoothing_factor: f32,
-        particle_density: f32, // #particles/m² for resting fluid
-        fluid_density: f32,    // kg/m² for the resting fluid
-        fluid_machnumber: f32, // speed of sound in this fluid
-        fluid_viscosity: f32,  // the dynamic viscosity of this fluid in Pa*s (μ, mu)
+        smoothing_factor: Real,
+        particle_density: Real, // #particles/m² for resting fluid
+        fluid_density: Real,    // kg/m² for the resting fluid
+        fluid_machnumber: Real, // speed of sound in this fluid
+        fluid_viscosity: Real,  // the dynamic viscosity of this fluid in Pa*s (μ, mu)
     ) -> HydroParticles {
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
         HydroParticles {
@@ -59,30 +59,30 @@ impl HydroParticles {
         }
     }
 
-    pub fn particle_mass(&self) -> f32 {
+    pub fn particle_mass(&self) -> Real {
         self.fluid_density / self.particle_density
     }
 
-    fn pressure(&self, local_density: f32) -> f32 {
+    fn pressure(&self, local_density: Real) -> Real {
         // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
         self.fluid_machnumber_sq * (local_density - self.fluid_density)
     }
 
-    fn particle_radius_from_particle_density(particle_density: f32) -> f32 {
+    fn particle_radius_from_particle_density(particle_density: Real) -> Real {
         // density is per m²
         0.5 / particle_density.sqrt()
     }
 
-    fn num_particles_per_meter(&self) -> f32 {
+    fn num_particles_per_meter(&self) -> Real {
         self.particle_density.sqrt()
     }
 
-    pub fn suggested_particle_render_radius(&self) -> f32 {
+    pub fn suggested_particle_render_radius(&self) -> Real {
         Self::particle_radius_from_particle_density(self.particle_density)
     }
 
     /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
-    pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: f32) {
+    pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: Real) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_particles_x = std::cmp::max(1, (fluid_rect.w * num_particles_per_meter) as usize);
@@ -94,24 +94,24 @@ impl HydroParticles {
         self.densities.resize(self.densities.len() + num_particles, na::zero());
         self.accellerations.resize(self.accellerations.len() + num_particles, na::zero());
 
-        let bottom_left = Position::new(fluid_rect.x, fluid_rect.y);
-        let step = (fluid_rect.w / (num_particles_x as f32)).min(fluid_rect.h / (num_particles_y as f32));
+        let bottom_left = Point::new(fluid_rect.x, fluid_rect.y);
+        let step = (fluid_rect.w / (num_particles_x as Real)).min(fluid_rect.h / (num_particles_y as Real));
         let jitter_factor = step * jitter_amount;
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
-                let jitter = (Direction::new_random() * 0.5 + Direction::new(0.5, 0.5)) * jitter_factor;
+                let jitter = (Vector::new_random() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
                 self.positions
-                    .push(bottom_left + jitter + na::Vector2::new(step * (x as f32), step * (y as f32)));
+                    .push(bottom_left + jitter + na::Vector2::new(step * (x as Real), step * (y as Real)));
             }
         }
     }
 
-    pub fn add_boundary_line(&mut self, start: &Position, end: &Position) {
+    pub fn add_boundary_line(&mut self, start: &Point, end: &Point) {
         let distance = na::distance(start, end);
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.boundary_particles.reserve(num_shadow_particles);
-        let step = (end - start) / (num_shadow_particles as f32);
+        let step = (end - start) / (num_shadow_particles as Real);
 
         let mut pos = *start;
         for _ in 0..num_shadow_particles {
@@ -152,11 +152,11 @@ impl HydroParticles {
         }
     }
 
-    pub fn physics_step(&mut self, dt: f32) {
+    pub fn physics_step(&mut self, dt: Real) {
         assert_eq!(self.positions.len(), self.velocities.len());
         assert_eq!(self.positions.len(), self.accellerations.len());
 
-        let gravity = Direction::new(0.0, -9.81) * 0.1;
+        let gravity = Vector::new(0.0, -9.81) * 0.1;
 
         // leap frog integratoin scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration

@@ -11,7 +11,7 @@ use ggez::nalgebra as na;
 pub struct Camera {
     pub screen: Rect,              // Screen rectangle
     pub pixel_per_world_unit: f32, // Scaling/Zoom factor of the camera ()
-    pub position: Position,        // The position of this camera in world space, i.e. the middle of the view.
+    pub position: Point,           // The position of this camera in world space, i.e. the middle of the view.
 }
 
 impl Camera {
@@ -19,7 +19,7 @@ impl Camera {
         let screen_extent = Size::new(screen.w, screen.h.abs());
         let world_extent = Size::new(world_rect_to_fit.w, world_rect_to_fit.h);
         let pixel_per_world_unit2d = screen_extent.component_div(&world_extent);
-        let world_rect_center = Position::new(
+        let world_rect_center = Point::new(
             world_rect_to_fit.x + world_rect_to_fit.w * 0.5,
             world_rect_to_fit.y + world_rect_to_fit.h * 0.5,
         );
@@ -37,11 +37,11 @@ impl Camera {
     }
 
     #[allow(dead_code)]
-    pub fn world_to_screen_coords(&self, world_pos: Position) -> Position {
+    pub fn world_to_screen_coords(&self, world_pos: Point) -> Point {
         let from_camera = world_pos - self.position;
         let view_scale = from_camera * self.pixel_per_world_unit;
 
-        Position::new(
+        Point::new(
             self.screen.x + view_scale.x + self.screen.w * 0.5,
             self.screen.y - view_scale.y + self.screen.h * 0.5,
         )
@@ -86,7 +86,7 @@ mod tests {
             Camera {
                 screen: Rect::new(321.0, 123.0, 200.0, 100.0),
                 pixel_per_world_unit: 2.5,
-                position: Position::new(20.0, 30.0),
+                position: Point::new(20.0, 30.0),
             },
             camera
         );
@@ -99,12 +99,12 @@ mod tests {
             let camera = Camera {
                 screen: Rect::new(0.0, 0.0, 200.0, 100.0),
                 pixel_per_world_unit: 10.0,
-                position: Position::origin(),
+                position: Point::origin(),
             };
 
-            assert_eq!(camera.world_to_screen_coords(Position::origin()), Position::new(100.0, 50.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(1.0, 1.0)), Position::new(110.0, 40.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(-1.0, -1.0)), Position::new(90.0, 60.0));
+            assert_eq!(camera.world_to_screen_coords(Point::origin()), Point::new(100.0, 50.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(1.0, 1.0)), Point::new(110.0, 40.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(-1.0, -1.0)), Point::new(90.0, 60.0));
         }
 
         // position at offset, screen no offset
@@ -112,11 +112,11 @@ mod tests {
             let camera = Camera {
                 screen: Rect::new(0.0, 0.0, 200.0, 100.0),
                 pixel_per_world_unit: 10.0,
-                position: Position::new(1.0, 1.0),
+                position: Point::new(1.0, 1.0),
             };
-            assert_eq!(camera.world_to_screen_coords(Position::origin()), Position::new(90.0, 60.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(1.0, 1.0)), Position::new(100.0, 50.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(-1.0, -1.0)), Position::new(80.0, 70.0));
+            assert_eq!(camera.world_to_screen_coords(Point::origin()), Point::new(90.0, 60.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(1.0, 1.0)), Point::new(100.0, 50.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(-1.0, -1.0)), Point::new(80.0, 70.0));
         }
 
         // position at origin, screen with some offset
@@ -124,12 +124,12 @@ mod tests {
             let camera = Camera {
                 screen: Rect::new(1.0, 2.0, 200.0, 100.0),
                 pixel_per_world_unit: 10.0,
-                position: Position::origin(),
+                position: Point::origin(),
             };
 
-            assert_eq!(camera.world_to_screen_coords(Position::origin()), Position::new(101.0, 52.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(1.0, 1.0)), Position::new(111.0, 42.0));
-            assert_eq!(camera.world_to_screen_coords(Position::new(-1.0, -1.0)), Position::new(91.0, 62.0));
+            assert_eq!(camera.world_to_screen_coords(Point::origin()), Point::new(101.0, 52.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(1.0, 1.0)), Point::new(111.0, 42.0));
+            assert_eq!(camera.world_to_screen_coords(Point::new(-1.0, -1.0)), Point::new(91.0, 62.0));
         }
     }
 }

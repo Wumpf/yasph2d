@@ -1,4 +1,4 @@
-use crate::units::{Direction, Real};
+use crate::units::{Real, Vector};
 
 /// SPH smoothing kernel
 ///
@@ -14,10 +14,10 @@ pub trait Kernel {
     fn evaluate(&self, r_sq: Real, r: Real) -> Real;
 
     /// Evaluates the gradient of the kernel, i.e. the first derivative for a given distance r/r_sq
-    /// `ri_to_rj`: Direction from a position j to a position i
+    /// `ri_to_rj`: Vector from a position j to a position i
     /// `r_sq`:     Squared length of ri_to_rj
     /// `r`:        Length of ri_to_rj
-    fn gradient(&self, ri_to_rj: Direction, r_sq: Real, r: Real) -> Direction;
+    fn gradient(&self, ri_to_rj: Vector, r_sq: Real, r: Real) -> Vector;
 
     /// Evaluates the laplacian of the kernel, i.e. the second derivative.
     /// `r_sq`:     Squared length of ri_to_rj

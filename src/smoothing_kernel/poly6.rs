@@ -1,5 +1,5 @@
 use super::kernel::Kernel;
-use crate::units::{Direction, Real};
+use crate::units::{Real, Vector};
 
 /// Poly6 smoothing kernel.
 ///
@@ -30,7 +30,7 @@ impl Kernel for Poly6 {
     }
 
     #[inline]
-    fn gradient(&self, ri_to_rj: Direction, r_sq: Real, _r: Real) -> Direction {
+    fn gradient(&self, ri_to_rj: Vector, r_sq: Real, _r: Real) -> Vector {
         let hsq_sub_rsq = self.hsq - r_sq;
         self.normalizer_grad * hsq_sub_rsq * hsq_sub_rsq * ri_to_rj
     }

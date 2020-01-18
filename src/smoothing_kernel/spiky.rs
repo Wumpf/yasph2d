@@ -1,5 +1,5 @@
 use super::kernel::Kernel;
-use crate::units::{Direction, Real};
+use crate::units::{Real, Vector};
 
 /// Debrun's "Spiky" smoothing kernel.
 ///
@@ -30,7 +30,7 @@ impl Kernel for Spiky {
     }
 
     #[inline]
-    fn gradient(&self, ri_to_rj: Direction, _r_sq: Real, r: Real) -> Direction {
+    fn gradient(&self, ri_to_rj: Vector, _r_sq: Real, r: Real) -> Vector {
         let hsubr = self.h - r;
         (self.normalizer_grad * hsubr * hsubr / (r + Self::DIVISION_EPSILON)) * ri_to_rj
     }

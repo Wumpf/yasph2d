@@ -42,9 +42,9 @@ impl MainState {
             0.5,    //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
         particles.add_fluid_rect(&Rect::new(0.2, 0.2, 0.6, 0.6), 0.05);
-        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
-        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(0.0, 1.0));
-        particles.add_boundary_line(&Position::new(1.0, 0.0), &Position::new(1.0, 1.0));
+        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(1.0, 0.0));
+        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.0));
+        particles.add_boundary_line(&Point::new(1.0, 0.0), &Point::new(1.0, 1.0));
 
         MainState {
             particles: particles,
