@@ -21,6 +21,8 @@ pub struct HydroParticles {
     pressure_kernel: smoothing_kernel::Spiky,
     viscosity_kernel: smoothing_kernel::Viscosity,
 
+    boundary_force_factor: f32,
+
     densities: Vec<f32>, // Local densities ρ
     pub forces: Vec<Direction>,
 }
@@ -47,6 +49,8 @@ impl HydroParticles {
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
             pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
             viscosity_kernel: smoothing_kernel::Viscosity::new(smoothing_length),
+
+            boundary_force_factor: 10.0,  // (expected accelleration) / (spacing ratio of boundary / normal particles)
 
             densities: Vec::new(),
             forces: Vec::new(),
@@ -96,7 +100,7 @@ impl HydroParticles {
 
     pub fn add_boundary_line(&mut self, start: &Position, end: &Position) {
         let distance = na::distance(start, end);
-        let num_particles_per_meter = self.num_particles_per_meter() * 4.0;
+        let num_particles_per_meter = self.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.boundary_particles.reserve(num_shadow_particles);
         let step = (end - start) / (num_shadow_particles as f32);
@@ -190,25 +194,17 @@ impl HydroParticles {
                 self.forces[j] -= ftotal;
             }
 
+            // Boundary forces as described by
+            // "SPH particle boundary forces for arbitrary bound-aries" by Monaghan and Kajtar 2009
+            // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
+            // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
             for rj in self.boundary_particles.iter() {
                 let ri_rj = ri - rj;
                 let r_sq = ri_rj.norm_squared();
-
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
-
-                // accelleration from pressure force
-                let fpressure_unsmoothed = -mass_sq * (pi) / (2.0 * rhoi);
-                let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq);
-
-                // accelleration from viscosity force
-                let velocitydiff = -self.velocities[i];
-                let fviscosity = self.fluid_viscosity * mass_sq * self.viscosity_kernel.laplacian(r_sq) / rhoi * velocitydiff;
-
-                let ftotal = fpressure + fviscosity;
-
-                self.forces[i] += ftotal;
+                self.forces[i] += mass * self.boundary_force_factor * self.density_kernel.evaluate(r_sq) / r_sq * ri_rj;
             }
         }
 
