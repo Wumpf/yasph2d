@@ -66,7 +66,7 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 240;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 480;
         const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
 
         self.last_simulationstep_count = 0;
@@ -111,8 +111,8 @@ impl EventHandler for MainState {
             b: 0.2,
             a: 1.0,
         };
-        for (p, f) in self.particles.positions.iter().zip(self.particles.forces.iter()) {
-            let c = heatmap_color(f.norm() / self.particles.particle_mass());
+        for (p, a) in self.particles.positions.iter().zip(self.particles.accellerations.iter()) {
+            let c = heatmap_color(a.norm());
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(c))?;
         }
         for p in self.particles.boundary_particles.iter() {

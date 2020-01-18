@@ -8,6 +8,7 @@ use crate::smoothing_kernel::Kernel;
 pub struct HydroParticles {
     pub positions: Vec<Position>,
     pub velocities: Vec<Velocity>,
+    pub accellerations: Vec<Velocity>,
 
     pub boundary_particles: Vec<Position>, // also called "shadow particles", immovable particles used for boundaries
 
@@ -24,7 +25,6 @@ pub struct HydroParticles {
     boundary_force_factor: f32,
 
     densities: Vec<f32>, // Local densities ρ
-    pub forces: Vec<Direction>,
 }
 
 impl HydroParticles {
@@ -39,6 +39,8 @@ impl HydroParticles {
         HydroParticles {
             positions: Vec::new(),
             velocities: Vec::new(),
+            accellerations: Vec::new(),
+
             boundary_particles: Vec::new(),
 
             smoothing_length_sq: smoothing_length * smoothing_length,
@@ -54,7 +56,6 @@ impl HydroParticles {
             boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
 
             densities: Vec::new(),
-            forces: Vec::new(),
         }
     }
 
@@ -63,8 +64,7 @@ impl HydroParticles {
     }
 
     fn pressure(&self, local_density: f32) -> f32 {
-        // todo: Learn more about other formulations. Tait equation?
-        // This one is from http://www8.cs.umu.se/kurser/TDBD24/VT07/lectures/Lecture10.pdf
+        // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
         self.fluid_machnumber_sq * (local_density - self.fluid_density)
     }
 
@@ -92,7 +92,7 @@ impl HydroParticles {
         self.positions.reserve(num_particles);
         self.velocities.resize(self.velocities.len() + num_particles, na::zero());
         self.densities.resize(self.densities.len() + num_particles, na::zero());
-        self.forces.resize(self.forces.len() + num_particles, na::zero());
+        self.accellerations.resize(self.accellerations.len() + num_particles, na::zero());
 
         let bottom_left = Position::new(fluid_rect.x, fluid_rect.y);
         let step = (fluid_rect.w / (num_particles_x as f32)).min(fluid_rect.h / (num_particles_y as f32));
@@ -154,19 +154,29 @@ impl HydroParticles {
 
     pub fn physics_step(&mut self, dt: f32) {
         assert_eq!(self.positions.len(), self.velocities.len());
-        assert_eq!(self.positions.len(), self.forces.len());
+        assert_eq!(self.positions.len(), self.accellerations.len());
+
+        let gravity = na::Vector2::new(0.0, -9.81) * 0.1;
+
+        // leap frog integratoin scheme with integer steps
+        // https://en.wikipedia.org/wiki/Leapfrog_integration
+        for ((pos, v), a) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.accellerations.iter()) {
+            *pos += *v * dt + a * (0.5 * dt * dt);
+            // partial update of velocity.
+            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
+            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
+            *v += 0.5 * dt * a;
+        }
 
         self.update_densities();
 
         let mass = self.particle_mass();
-        let mass_sq = mass * mass;
 
-        let gravity = na::Vector2::new(0.0, -9.81) * 0.01;
-        for f in self.forces.iter_mut() {
-            *f = gravity * mass;
+        for a in self.accellerations.iter_mut() {
+            *a = gravity;
         }
 
-        // pressure forces
+        // pressure & viscosity forces
         // It's done in a symmetric way
         // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
         // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
@@ -183,23 +193,21 @@ impl HydroParticles {
 
                 let pj = self.pressure(*rhoj);
 
-                // ... also conveniently gives us the same term for i and j then!
-                // (which makes sense, since interaction of two particles should always be symmetric)
-
                 // accelleration from pressure force
-                let fpressure_unsmoothed = -mass_sq * (pi + pj) / (2.0 * rhoi * rhoj);
+                let fpressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
                 assert!(!fpressure_unsmoothed.is_nan());
                 assert!(!fpressure_unsmoothed.is_infinite());
                 let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq);
 
                 // accelleration from viscosity force
                 let velocitydiff = self.velocities[j] - self.velocities[i];
-                let fviscosity = self.fluid_viscosity * mass_sq * self.viscosity_kernel.laplacian(r_sq) / (rhoi * rhoj) * velocitydiff;
+                let fviscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq) / (rhoi * rhoj) * velocitydiff;
 
                 let ftotal = fpressure + fviscosity;
 
-                self.forces[i] += ftotal;
-                self.forces[j] -= ftotal;
+                // Symmetric!
+                self.accellerations[i] += ftotal;
+                self.accellerations[j] -= ftotal;
             }
 
             // Boundary forces as described by
@@ -212,14 +220,13 @@ impl HydroParticles {
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
-                self.forces[i] += mass * self.boundary_force_factor * self.density_kernel.evaluate(r_sq) / r_sq * ri_rj;
+                self.accellerations[i] += self.boundary_force_factor * self.density_kernel.evaluate(r_sq) / r_sq * ri_rj;
             }
         }
 
-        for ((pos, v), f) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.forces.iter()) {
-            // todo izip!
-            *v += f / mass * dt;
-            *pos += *v * dt;
+        // part 2 of leap frog integration. Finish updating velocity.
+        for (v, a) in self.velocities.iter_mut().zip(self.accellerations.iter()) {
+            *v += 0.5 * dt * a;
         }
     }
 }
