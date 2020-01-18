@@ -31,7 +31,9 @@ impl MainState {
         let mut particles = HydroParticles::new(
             0.05,   // smoothing length
             1000.0, // #particles/m²
-            1000.0, // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
+            100.0, // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
+            0.5, //1500.0, // speed of sound in water in m/s
+            0.5, //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
         particles.add_fluid_rect(&Rect::new(0.2, 0.4, 0.6, 0.6));
         particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
@@ -47,7 +49,7 @@ impl MainState {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 120;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 200;
         const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
 
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
@@ -84,8 +86,15 @@ impl EventHandler for MainState {
             0.0005,
             graphics::BLACK,
         )?;
-        for p in self.particles.positions.iter() {
-            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p))?;
+        for (p, f) in self.particles.positions.iter().zip(self.particles.forces.iter()) {
+            let c = f.norm() / self.particles.particle_mass();
+            graphics::draw(
+                ctx,
+                &particle,
+                ggez::graphics::DrawParam::default()
+                    .dest(*p)
+                    .color(graphics::Color { r: c, g: c, b: c, a: 1.0 }),
+            )?;
         }
         for p in self.particles.boundary_particles.iter() {
             graphics::draw(ctx, &boundary_particle, ggez::graphics::DrawParam::default().dest(*p))?;
