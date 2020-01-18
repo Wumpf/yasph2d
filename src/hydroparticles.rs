@@ -85,8 +85,8 @@ impl HydroParticles {
     pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: Real) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis
         let num_particles_per_meter = self.num_particles_per_meter();
-        let num_particles_x = std::cmp::max(1, (fluid_rect.w * num_particles_per_meter) as usize);
-        let num_particles_y = std::cmp::max(1, (fluid_rect.h * num_particles_per_meter) as usize);
+        let num_particles_x = std::cmp::max(1, (fluid_rect.w as Real * num_particles_per_meter) as usize);
+        let num_particles_y = std::cmp::max(1, (fluid_rect.h as Real * num_particles_per_meter) as usize);
         let num_particles = num_particles_x * num_particles_y;
 
         self.positions.reserve(num_particles);
@@ -94,8 +94,8 @@ impl HydroParticles {
         self.densities.resize(self.densities.len() + num_particles, na::zero());
         self.accellerations.resize(self.accellerations.len() + num_particles, na::zero());
 
-        let bottom_left = Point::new(fluid_rect.x, fluid_rect.y);
-        let step = (fluid_rect.w / (num_particles_x as Real)).min(fluid_rect.h / (num_particles_y as Real));
+        let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
+        let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));
         let jitter_factor = step * jitter_amount;
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {

@@ -6,13 +6,13 @@ use crate::units::{Real, Vector};
 /// Refer to "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
 /// Kernel not well suited for computing pressure forces since derivative approaches zero.
 pub struct Poly6 {
-    hsq: f32,
-    normalizer: f32,
-    normalizer_grad: f32,
+    hsq: Real,
+    normalizer: Real,
+    normalizer_grad: Real,
 }
 
 impl Poly6 {
-    pub fn new(smoothing_length: f32) -> Poly6 {
+    pub fn new(smoothing_length: Real) -> Poly6 {
         Poly6 {
             hsq: smoothing_length * smoothing_length,
             // 2D normalization factor from Salva https://github.com/rustsim/salva/blob/master/src/kernel/poly6_kernel.rs#L14

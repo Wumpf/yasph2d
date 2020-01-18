@@ -67,7 +67,7 @@ fn heatmap_color(t: f32) -> graphics::Color {
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         const DESIRED_UPDATES_PER_SECOND: u32 = 480;
-        const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
+        const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
         self.last_simulationstep_count = 0;
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
@@ -101,7 +101,7 @@ impl EventHandler for MainState {
             ctx,
             graphics::DrawMode::fill(),
             na::Point2::new(0.0, 0.0),
-            particle_radius,
+            particle_radius as f32,
             0.0003,
             graphics::WHITE,
         )?;
@@ -112,11 +112,13 @@ impl EventHandler for MainState {
             a: 1.0,
         };
         for (p, a) in self.particles.positions.iter().zip(self.particles.accellerations.iter()) {
-            let c = heatmap_color(a.norm());
-            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(c))?;
+            let c = heatmap_color(a.norm() as f32);
+            let rp: RenderPoint = na::convert(*p);
+            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
         for p in self.particles.boundary_particles.iter() {
-            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(*p).color(boundary_color))?;
+            let rp: RenderPoint = na::convert(*p);
+            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(boundary_color))?;
         }
 
         graphics::pop_transform(ctx);
