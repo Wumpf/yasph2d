@@ -1,5 +1,5 @@
 use super::kernel::Kernel;
-use crate::units::Direction;
+use crate::units::{Direction, Real};
 
 /// Poly6 smoothing kernel.
 ///
@@ -16,27 +16,27 @@ impl Poly6 {
         Poly6 {
             hsq: smoothing_length * smoothing_length,
             // 2D normalization factor from Salva https://github.com/rustsim/salva/blob/master/src/kernel/poly6_kernel.rs#L14
-            normalizer: 4.0 / (std::f32::consts::PI * smoothing_length.powi(8)),
-            normalizer_grad: -24.0 / (std::f32::consts::PI * smoothing_length.powi(8)),
+            normalizer: 4.0 / (std::f64::consts::PI as Real * smoothing_length.powi(8)),
+            normalizer_grad: -24.0 / (std::f64::consts::PI as Real * smoothing_length.powi(8)),
         }
     }
 }
 
 impl Kernel for Poly6 {
     #[inline]
-    fn evaluate(&self, r_sq: f32) -> f32 {
+    fn evaluate(&self, r_sq: Real, _r: Real) -> Real {
         let dsq = self.hsq - r_sq;
         self.normalizer * dsq * dsq * dsq
     }
 
     #[inline]
-    fn gradient(&self, ri_rj: Direction, r_sq: f32) -> Direction {
+    fn gradient(&self, ri_to_rj: Direction, r_sq: Real, _r: Real) -> Direction {
         let hsq_sub_rsq = self.hsq - r_sq;
-        self.normalizer_grad * hsq_sub_rsq * hsq_sub_rsq * ri_rj
+        self.normalizer_grad * hsq_sub_rsq * hsq_sub_rsq * ri_to_rj
     }
 
     #[inline]
-    fn laplacian(&self, _r_sq: f32) -> f32 {
+    fn laplacian(&self, _r_sq: Real, _r: Real) -> Real {
         unimplemented!();
     }
 }

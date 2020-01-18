@@ -131,13 +131,13 @@ impl HydroParticles {
 
         // Density contributions are symmetric!
         for (i, ri) in self.positions.iter().enumerate() {
-            self.densities[i] += self.density_kernel.evaluate(0.0) * mass; // self-contribution
+            self.densities[i] += self.density_kernel.evaluate(0.0, 0.0) * mass; // self-contribution
             for (j, rj) in self.positions.iter().enumerate().skip(i + 1) {
                 let r_sq = na::distance_squared(ri, rj);
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
-                let density_contribution = self.density_kernel.evaluate(r_sq) * mass;
+                let density_contribution = self.density_kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                 self.densities[i] += density_contribution;
                 self.densities[j] += density_contribution;
             }
@@ -146,7 +146,7 @@ impl HydroParticles {
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
-                let density_contribution = self.density_kernel.evaluate(r_sq) * mass;
+                let density_contribution = self.density_kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                 self.densities[i] += density_contribution;
             }
         }
@@ -156,7 +156,7 @@ impl HydroParticles {
         assert_eq!(self.positions.len(), self.velocities.len());
         assert_eq!(self.positions.len(), self.accellerations.len());
 
-        let gravity = na::Vector2::new(0.0, -9.81) * 0.1;
+        let gravity = Direction::new(0.0, -9.81) * 0.1;
 
         // leap frog integratoin scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
@@ -190,6 +190,7 @@ impl HydroParticles {
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
+                let r = r_sq.sqrt();
 
                 let pj = self.pressure(*rhoj);
 
@@ -197,11 +198,11 @@ impl HydroParticles {
                 let fpressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
                 assert!(!fpressure_unsmoothed.is_nan());
                 assert!(!fpressure_unsmoothed.is_infinite());
-                let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq);
+                let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
 
                 // accelleration from viscosity force
                 let velocitydiff = self.velocities[j] - self.velocities[i];
-                let fviscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq) / (rhoi * rhoj) * velocitydiff;
+                let fviscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
 
                 let ftotal = fpressure + fviscosity;
 
@@ -211,7 +212,7 @@ impl HydroParticles {
             }
 
             // Boundary forces as described by
-            // "SPH particle boundary forces for arbitrary bound-aries" by Monaghan and Kajtar 2009
+            // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
             // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
             // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
             for rj in self.boundary_particles.iter() {
@@ -220,7 +221,7 @@ impl HydroParticles {
                 if r_sq > self.smoothing_length_sq {
                     continue;
                 }
-                self.accellerations[i] += self.boundary_force_factor * self.density_kernel.evaluate(r_sq) / r_sq * ri_rj;
+                self.accellerations[i] += self.boundary_force_factor * self.density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
             }
         }
 
