@@ -3,6 +3,8 @@ use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
+use std::time::{Duration, Instant};
+
 mod camera;
 mod hydroparticles;
 mod smoothing_kernel;
@@ -24,6 +26,8 @@ fn main() -> GameResult {
 struct MainState {
     particles: HydroParticles,
     camera: Camera,
+    last_simulationstep_duration: Duration,
+    last_simulationstep_count: u32,
 }
 
 impl MainState {
@@ -31,9 +35,9 @@ impl MainState {
         let mut particles = HydroParticles::new(
             0.05,   // smoothing length
             1000.0, // #particles/m²
-            100.0, // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
-            0.5, //1500.0, // speed of sound in water in m/s
-            0.5, //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
+            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
+            0.5,    //1500.0, // speed of sound in water in m/s
+            0.5,    //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
         particles.add_fluid_rect(&Rect::new(0.2, 0.4, 0.6, 0.6));
         particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
@@ -43,17 +47,23 @@ impl MainState {
         MainState {
             particles: particles,
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.1, 1.1)),
+            last_simulationstep_duration: Default::default(),
+            last_simulationstep_count: 0,
         }
     }
 }
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 200;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 240;
         const TIME_STEP: f32 = 1.0 / (DESIRED_UPDATES_PER_SECOND as f32);
 
+        self.last_simulationstep_count = 0;
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
+            let time_start = std::time::Instant::now();
             self.particles.physics_step(TIME_STEP);
+            self.last_simulationstep_duration = Instant::now() - time_start;
+            self.last_simulationstep_count += 1;
         }
         Ok(())
     }
@@ -63,7 +73,13 @@ impl EventHandler for MainState {
 
         let fps = timer::fps(ctx);
 
-        let fps_display = graphics::Text::new(format!("{:.2}ms, FPS: {:.2}", 1000.0 / fps, fps));
+        let fps_display = graphics::Text::new(format!(
+            "{:.2}ms, FPS: {:.2}\nSimStep duration {:.2}ms ({} per frame)",
+            1000.0 / fps,
+            fps,
+            self.last_simulationstep_duration.as_secs_f64() * 1000.0,
+            self.last_simulationstep_count
+        ));
         graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
 
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
