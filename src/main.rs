@@ -35,16 +35,16 @@ struct MainState {
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut particles = HydroParticles::new(
-            1.2,    // smoothing factor
+            1.3,    // smoothing factor
             2000.0, // #particles/m²
-            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
-            0.5,    //1500.0, // speed of sound in water in m/s
+            10.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
+            1.0,    //1500.0, // speed of sound in water in m/s
             0.5,    //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
-        particles.add_fluid_rect(&Rect::new(0.2, 0.4, 0.6, 0.6), 0.05);
+        particles.add_fluid_rect(&Rect::new(0.2, 0.2, 0.6, 0.6), 0.05);
         particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(1.0, 0.0));
-        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(0.0, 0.75));
-        particles.add_boundary_line(&Position::new(1.0, 0.0), &Position::new(1.0, 0.75));
+        particles.add_boundary_line(&Position::new(0.0, 0.0), &Position::new(0.0, 1.0));
+        particles.add_boundary_line(&Position::new(1.0, 0.0), &Position::new(1.0, 1.0));
 
         MainState {
             particles: particles,
