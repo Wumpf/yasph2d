@@ -1,8 +1,10 @@
 use crate::units::Direction;
 
 /// SPH smoothing kernel
-/// 
+///
 /// Only radially symmetric kernels are supported.
+/// Assume support only within smoothing length, i.e. for |r|>h user should assume 0 as result.
+/// To allow some optimizations, the actual result may be different so user needs to check!
 pub trait Kernel {
     /// Evaluates the kernel function for a given square of distance r_sq
     fn evaluate(&self, r_sq: f32) -> f32;

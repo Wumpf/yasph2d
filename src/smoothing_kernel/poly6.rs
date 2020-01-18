@@ -1,6 +1,5 @@
 use super::kernel::Kernel;
 use crate::units::Direction;
-use ggez::nalgebra as na;
 
 /// Poly6 smoothing kernel.
 ///
@@ -26,22 +25,14 @@ impl Poly6 {
 impl Kernel for Poly6 {
     #[inline]
     fn evaluate(&self, r_sq: f32) -> f32 {
-        if r_sq <= self.hsq {
-            let dsq = self.hsq - r_sq;
-            self.normalizer * dsq * dsq * dsq
-        } else {
-            0.0
-        }
+        let dsq = self.hsq - r_sq;
+        self.normalizer * dsq * dsq * dsq
     }
 
     #[inline]
     fn gradient(&self, ri_rj: Direction, r_sq: f32) -> Direction {
-        if r_sq <= self.hsq {
-            let hsq_sub_rsq = self.hsq - r_sq;
-            self.normalizer_grad * hsq_sub_rsq * hsq_sub_rsq * ri_rj
-        } else {
-            na::zero()
-        }
+        let hsq_sub_rsq = self.hsq - r_sq;
+        self.normalizer_grad * hsq_sub_rsq * hsq_sub_rsq * ri_rj
     }
 
     #[inline]

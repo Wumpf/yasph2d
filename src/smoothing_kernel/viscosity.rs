@@ -29,12 +29,8 @@ impl Viscosity {
 impl Kernel for Viscosity {
     #[inline]
     fn evaluate(&self, r_sq: f32) -> f32 {
-        if r_sq <= self.hsq {
-            let r = r_sq.sqrt(); //if r_sq < 0.00000001 { r_sq } else { r_sq.sqrt() };
-            self.normalizer * (4.0 * r_sq * r / (9.0 * self.h) + r_sq) / self.hsq
-        } else {
-            0.0
-        }
+        let r = r_sq.sqrt(); //if r_sq < 0.00000001 { r_sq } else { r_sq.sqrt() };
+        self.normalizer * (4.0 * r_sq * r / (9.0 * self.h) + r_sq) / self.hsq
     }
 
     #[inline]
@@ -44,11 +40,7 @@ impl Kernel for Viscosity {
 
     #[inline]
     fn laplacian(&self, r_sq: f32) -> f32 {
-        if r_sq <= self.hsq {
-            let r = if r_sq < 0.00000001 { r_sq } else { r_sq.sqrt() };
-            self.normalizer_laplacian * (self.h - r)
-        } else {
-            0.0
-        }
+        let r = if r_sq < 0.00000001 { r_sq } else { r_sq.sqrt() };
+        self.normalizer_laplacian * (self.h - r)
     }
 }
