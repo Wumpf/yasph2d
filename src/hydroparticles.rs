@@ -81,7 +81,8 @@ impl HydroParticles {
         Self::particle_radius_from_particle_density(self.particle_density)
     }
 
-    pub fn add_fluid_rect(&mut self, fluid_rect: &Rect) {
+    /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
+    pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: f32) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_particles_x = std::cmp::max(1, (fluid_rect.w * num_particles_per_meter) as usize);
@@ -94,12 +95,13 @@ impl HydroParticles {
         self.forces.resize(self.forces.len() + num_particles, na::zero());
 
         let bottom_left = Position::new(fluid_rect.x, fluid_rect.y);
-        let step_x = fluid_rect.w / (num_particles_x as f32);
-        let step_y = fluid_rect.h / (num_particles_y as f32);
+        let step = (fluid_rect.w / (num_particles_x as f32)).min(fluid_rect.h / (num_particles_y as f32));
+        let jitter_factor = step * jitter_amount;
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
+                let jitter = (Direction::new_random() * 0.5 + Direction::new(0.5, 0.5)) * jitter_factor;
                 self.positions
-                    .push(bottom_left + na::Vector2::new(step_x * (x as f32), step_y * (y as f32)));
+                    .push(bottom_left + jitter + na::Vector2::new(step * (x as f32), step * (y as f32)));
             }
         }
     }
