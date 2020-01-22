@@ -13,6 +13,7 @@ pub struct HydroParticles {
     pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
 
     smoothing_length_sq: Real, // typically expressed as 'h'
+    smoothing_length: Real,
     particle_density: Real,    // #particles/m² for resting fluid
     fluid_density: Real,       // kg/m² for the resting fluid (ρ, rho)
     fluid_speedofsound_sq: Real, // speed of sound in this fluid squared
@@ -43,6 +44,7 @@ impl HydroParticles {
 
             boundary_particles: Vec::new(),
 
+            smoothing_length: smoothing_length,
             smoothing_length_sq: smoothing_length * smoothing_length,
             particle_density: particle_density,
             fluid_density: fluid_density,
@@ -152,13 +154,15 @@ impl HydroParticles {
         }
     }
 
-    fn update_accellerations(&mut self) {
+    fn update_accellerations(&mut self, dt: Real) {
         let mass = self.particle_mass();
 
-        let gravity = Vector::new(0.0, -9.81) * 0.01;
+        let gravity = Vector::new(0.0, -9.81) * 0.1;
         for a in self.accellerations.iter_mut() {
             *a = gravity;
         }
+
+        let inv_dt = 1.0 / dt;
 
         // pressure & viscosity forces
         // It's done in a symmetric way
@@ -180,21 +184,25 @@ impl HydroParticles {
 
                 // accelleration from pressure force
                 // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-                let fpressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                assert!(!fpressure_unsmoothed.is_nan());
-                assert!(!fpressure_unsmoothed.is_infinite());
-                let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
+                let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
+                let pressure = pressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
 
                 // accelleration from viscosity force
                 // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                 let velocitydiff = self.velocities[j] - self.velocities[i];
-                let fviscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
+                let viscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
 
-                let ftotal = fpressure + fviscosity;
+                let total = pressure + viscosity;
 
                 // Symmetric!
-                self.accellerations[i] += ftotal;
-                self.accellerations[j] -= ftotal;
+                self.accellerations[i] += total;
+                self.accellerations[j] -= total;
+
+                // TODO: Schechter et al. is right - physical viscosity doesn't make sense if there's XSPH!!!
+                // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
+                let xsphweight = inv_dt * 0.2 * mass * self.density_kernel.evaluate(r_sq, r);
+                self.accellerations[i] += xsphweight / rhoj * velocitydiff;
+                self.accellerations[j] -= xsphweight / rhoi * velocitydiff;
             }
 
             // Boundary forces as described by
@@ -227,7 +235,7 @@ impl HydroParticles {
         }
 
         self.update_densities();
-        self.update_accellerations();
+        self.update_accellerations(dt);
 
         // part 2 of leap frog integration. Finish updating velocity.
         for (v, a) in self.velocities.iter_mut().zip(self.accellerations.iter()) {

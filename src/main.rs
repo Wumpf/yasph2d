@@ -35,20 +35,20 @@ struct MainState {
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut particles = HydroParticles::new(
-            1.3,    // smoothing factor
-            2000.0, // #particles/m²
+            1.2,    // smoothing factor
+            2500.0, // #particles/m²
             10.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
-            1.0,    //1500.0, // speed of sound in water in m/s
-            0.5,    //1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
+            1.5,    //1500.0, // speed of sound in water in m/s
+            1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
-        particles.add_fluid_rect(&Rect::new(0.2, 0.2, 0.6, 0.6), 0.05);
-        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(1.0, 0.0));
-        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.0));
-        particles.add_boundary_line(&Point::new(1.0, 0.0), &Point::new(1.0, 1.0));
+        particles.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
+        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(1.5, 0.0));
+        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.5));
+        particles.add_boundary_line(&Point::new(1.5, 0.0), &Point::new(1.5, 1.5));
 
         MainState {
             particles: particles,
-            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.1, 1.1)),
+            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
             last_simulationstep_duration: Default::default(),
             last_simulationstep_count: 0,
         }
@@ -66,13 +66,13 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 480;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 60*4;
         const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
         self.last_simulationstep_count = 0;
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
             let time_start = std::time::Instant::now();
-            self.particles.physics_step(TIME_STEP);
+            self.particles.physics_step(TIME_STEP/2.0);
             self.last_simulationstep_duration = Instant::now() - time_start;
             self.last_simulationstep_count += 1;
         }
