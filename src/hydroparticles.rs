@@ -15,7 +15,7 @@ pub struct HydroParticles {
     smoothing_length_sq: Real, // typically expressed as 'h'
     particle_density: Real,    // #particles/m² for resting fluid
     fluid_density: Real,       // kg/m² for the resting fluid (ρ, rho)
-    fluid_machnumber_sq: Real, // speed of sound in this fluid squared
+    fluid_speedofsound_sq: Real, // speed of sound in this fluid squared
     fluid_viscosity: Real,     // the dynamic viscosity of this fluid in Pa*s (μ, mu)
 
     density_kernel: smoothing_kernel::Poly6,
@@ -32,7 +32,7 @@ impl HydroParticles {
         smoothing_factor: Real,
         particle_density: Real, // #particles/m² for resting fluid
         fluid_density: Real,    // kg/m² for the resting fluid
-        fluid_machnumber: Real, // speed of sound in this fluid
+        fluid_speedofsound: Real, // speed of sound in this fluid
         fluid_viscosity: Real,  // the dynamic viscosity of this fluid in Pa*s (μ, mu)
     ) -> HydroParticles {
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
@@ -46,7 +46,7 @@ impl HydroParticles {
             smoothing_length_sq: smoothing_length * smoothing_length,
             particle_density: particle_density,
             fluid_density: fluid_density,
-            fluid_machnumber_sq: fluid_machnumber * fluid_machnumber,
+            fluid_speedofsound_sq: fluid_speedofsound * fluid_speedofsound,
             fluid_viscosity: fluid_viscosity,
 
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
@@ -65,7 +65,7 @@ impl HydroParticles {
 
     fn pressure(&self, local_density: Real) -> Real {
         // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
-        self.fluid_machnumber_sq * (local_density - self.fluid_density)
+        self.fluid_speedofsound_sq * (local_density - self.fluid_density)
     }
 
     fn particle_radius_from_particle_density(particle_density: Real) -> Real {
@@ -124,7 +124,7 @@ impl HydroParticles {
         assert_eq!(self.positions.len(), self.densities.len());
 
         for density in self.densities.iter_mut() {
-            *density = 1.0e-10; // avoid dealing with 0 density
+            *density = 0.0;
         }
 
         let mass = self.particle_mass();
@@ -158,7 +158,7 @@ impl HydroParticles {
 
         let gravity = Vector::new(0.0, -9.81) * 0.1;
 
-        // leap frog integratoin scheme with integer steps
+        // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
         for ((pos, v), a) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.accellerations.iter()) {
             *pos += *v * dt + a * (0.5 * dt * dt);
