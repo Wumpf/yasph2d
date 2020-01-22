@@ -152,26 +152,10 @@ impl HydroParticles {
         }
     }
 
-    pub fn physics_step(&mut self, dt: Real) {
-        assert_eq!(self.positions.len(), self.velocities.len());
-        assert_eq!(self.positions.len(), self.accellerations.len());
-
-        let gravity = Vector::new(0.0, -9.81) * 0.1;
-
-        // leap frog integration scheme with integer steps
-        // https://en.wikipedia.org/wiki/Leapfrog_integration
-        for ((pos, v), a) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.accellerations.iter()) {
-            *pos += *v * dt + a * (0.5 * dt * dt);
-            // partial update of velocity.
-            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
-            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
-            *v += 0.5 * dt * a;
-        }
-
-        self.update_densities();
-
+    fn update_accellerations(&mut self) {
         let mass = self.particle_mass();
 
+        let gravity = Vector::new(0.0, -9.81) * 0.01;
         for a in self.accellerations.iter_mut() {
             *a = gravity;
         }
@@ -195,12 +179,14 @@ impl HydroParticles {
                 let pj = self.pressure(*rhoj);
 
                 // accelleration from pressure force
+                // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                 let fpressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
                 assert!(!fpressure_unsmoothed.is_nan());
                 assert!(!fpressure_unsmoothed.is_infinite());
                 let fpressure = fpressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
 
                 // accelleration from viscosity force
+                // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                 let velocitydiff = self.velocities[j] - self.velocities[i];
                 let fviscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
 
@@ -224,6 +210,24 @@ impl HydroParticles {
                 self.accellerations[i] += self.boundary_force_factor * self.density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
             }
         }
+    }
+
+    pub fn physics_step(&mut self, dt: Real) {
+        assert_eq!(self.positions.len(), self.velocities.len());
+        assert_eq!(self.positions.len(), self.accellerations.len());
+
+        // leap frog integration scheme with integer steps
+        // https://en.wikipedia.org/wiki/Leapfrog_integration
+        for ((pos, v), a) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.accellerations.iter()) {
+            *pos += *v * dt + a * (0.5 * dt * dt);
+            // partial update of velocity.
+            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
+            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
+            *v += 0.5 * dt * a;
+        }
+
+        self.update_densities();
+        self.update_accellerations();
 
         // part 2 of leap frog integration. Finish updating velocity.
         for (v, a) in self.velocities.iter_mut().zip(self.accellerations.iter()) {
