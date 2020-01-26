@@ -1,9 +1,11 @@
 use super::units::*;
 use ggez::graphics::Rect;
 use ggez::nalgebra as na;
+use rayon::prelude::*;
 
 use crate::smoothing_kernel;
 use crate::smoothing_kernel::Kernel;
+
 
 pub struct HydroParticles {
     pub positions: Vec<Point>,
@@ -125,99 +127,110 @@ impl HydroParticles {
     fn update_densities(&mut self) {
         assert_eq!(self.positions.len(), self.densities.len());
 
-        for density in self.densities.iter_mut() {
-            *density = 0.0;
-        }
-
         let mass = self.particle_mass();
 
-        // Density contributions are symmetric!
-        for (i, ri) in self.positions.iter().enumerate() {
-            self.densities[i] += self.density_kernel.evaluate(0.0, 0.0) * mass; // self-contribution
-            for (j, rj) in self.positions.iter().enumerate().skip(i + 1) {
+        // Density contributions are symmetric, but that is hard to use in a parallel loop.
+        let positions = &self.positions;
+        let kernel = &self.density_kernel;
+        let smoothing_length_sq = self.smoothing_length_sq;
+        let boundary_particles = &self.boundary_particles;
+
+        self.densities.par_iter_mut().zip(positions.par_iter()).for_each(|(density, ri)| {
+            *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
+            for rj in positions.iter() {
                 let r_sq = na::distance_squared(ri, rj);
-                if r_sq > self.smoothing_length_sq {
+                if r_sq > smoothing_length_sq {
                     continue;
                 }
-                let density_contribution = self.density_kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                self.densities[i] += density_contribution;
-                self.densities[j] += density_contribution;
+                let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                *density += density_contribution;
             }
-            for rj in self.boundary_particles.iter() {
+            for rj in boundary_particles.iter() {
                 let r_sq = na::distance_squared(ri, rj);
-                if r_sq > self.smoothing_length_sq {
+                if r_sq > smoothing_length_sq {
                     continue;
                 }
-                let density_contribution = self.density_kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                self.densities[i] += density_contribution;
+                let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                *density += density_contribution;
             }
-        }
+        });
     }
 
     fn update_accellerations(&mut self, dt: Real) {
         let mass = self.particle_mass();
 
-        let gravity = Vector::new(0.0, -9.81) * 0.1;
-        for a in self.accellerations.iter_mut() {
-            *a = gravity;
-        }
-
+        let gravity = Vector::new(0.0, -9.81);
         let inv_dt = 1.0 / dt;
 
         // pressure & viscosity forces
-        // It's done in a symmetric way
         // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
         // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
-        for (i, (ri, rhoi)) in self.positions.iter().zip(self.densities.iter()).enumerate() {
-            let pi = self.pressure(*rhoi);
+        
+        // TODO: This is just insane.
+        let positions = &self.positions;
+        let densities = &self.densities;
+        let velocities = &self.velocities;
+        let pressure_kernel = &self.pressure_kernel;
+        let viscosity_kernel = &self.viscosity_kernel;
+        let density_kernel = &self.density_kernel;
+        let smoothing_length_sq = self.smoothing_length_sq;
+        let boundary_particles = &self.boundary_particles;
+        let boundary_force_factor = self.boundary_force_factor;
+        let fluid_viscosity = self.fluid_viscosity;
+        let fluid_density = self.fluid_density;
+
+        self.accellerations.par_iter_mut()
+            .zip(positions.par_iter())
+            .zip(densities.par_iter())
+            .zip(velocities.par_iter())
+            .for_each(|(((accelleration, ri), rhoi), vi)| {
+            *accelleration = gravity;
+
+            let pi = HydroParticles::pressure(fluid_density, *rhoi);
 
             // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
-            for (j, (rj, rhoj)) in self.positions.iter().zip(self.densities.iter()).enumerate().skip(i + 1) {
+            for ((rj, rhoj), vj) in positions.iter().zip(densities.iter()).zip(velocities.iter()) {
                 let ri_rj = ri - rj;
                 let r_sq = ri_rj.norm_squared();
-                if r_sq > self.smoothing_length_sq {
+                if r_sq > smoothing_length_sq {
                     continue;
                 }
                 let r = r_sq.sqrt();
 
-                let pj = self.pressure(*rhoj);
+                let pj = HydroParticles::pressure(fluid_density, *rhoj);
 
                 // accelleration from pressure force
                 // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
+                // This is a weakly compressible model (WCSPH)
                 let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                let pressure = pressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
+                let pressure = pressure_unsmoothed * pressure_kernel.gradient(ri_rj, r_sq, r);
 
                 // accelleration from viscosity force
                 // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-                let velocitydiff = self.velocities[j] - self.velocities[i];
-                let viscosity = self.fluid_viscosity * mass * self.viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
+                let velocitydiff = vj - vi;
+                let viscosity = fluid_viscosity * mass * viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
 
                 let total = pressure + viscosity;
-
-                // Symmetric!
-                self.accellerations[i] += total;
-                self.accellerations[j] -= total;
+                *accelleration += total;
 
                 // TODO: Schechter et al. is right - physical viscosity doesn't make sense if there's XSPH!!!
                 // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
-                let xsphweight = inv_dt * 0.2 * mass * self.density_kernel.evaluate(r_sq, r);
-                self.accellerations[i] += xsphweight / rhoj * velocitydiff;
-                self.accellerations[j] -= xsphweight / rhoi * velocitydiff;
+                *accelleration += inv_dt * 0.2 * mass * density_kernel.evaluate(r_sq, r) / rhoj * velocitydiff;
             }
 
             // Boundary forces as described by
             // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
             // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
             // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
-            for rj in self.boundary_particles.iter() {
+            for rj in boundary_particles.iter() {
                 let ri_rj = ri - rj;
                 let r_sq = ri_rj.norm_squared();
-                if r_sq > self.smoothing_length_sq {
+                if r_sq > smoothing_length_sq {
                     continue;
                 }
-                self.accellerations[i] += self.boundary_force_factor * self.density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
+                *accelleration += boundary_force_factor * density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
             }
-        }
+        });
     }
 
     pub fn physics_step(&mut self, dt: Real) {
