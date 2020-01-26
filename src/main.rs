@@ -38,7 +38,7 @@ impl MainState {
         let mut particles = HydroParticles::new(
             1.2,    // smoothing factor
             2500.0, // #particles/m²
-            10.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
+            100.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
             1.5,    //1500.0, // speed of sound in water in m/s
             1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
         );
@@ -68,7 +68,7 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 60*16;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 60*20;
         const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
         self.last_simulationstep_count = 0;
@@ -76,7 +76,13 @@ impl EventHandler for MainState {
         let time_sim_start = std::time::Instant::now();
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
             let time_start = std::time::Instant::now();
-            self.particles.physics_step(TIME_STEP/2.0);
+
+            if timer::ticks(ctx) < 80 { // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
+                self.particles.physics_step(0.0000000001);
+            } else {
+                self.particles.physics_step(TIME_STEP);
+            }
+
             self.last_single_simulationstep_duration = Instant::now() - time_start;
             self.last_simulationstep_count += 1;
         }
