@@ -28,7 +28,8 @@ fn main() -> GameResult {
 struct MainState {
     particles: HydroParticles,
     camera: Camera,
-    last_simulationstep_duration: Duration,
+    last_total_simulationstep_duration: Duration,
+    last_single_simulationstep_duration: Duration,
     last_simulationstep_count: u32,
 }
 
@@ -49,7 +50,8 @@ impl MainState {
         MainState {
             particles: particles,
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
-            last_simulationstep_duration: Default::default(),
+            last_total_simulationstep_duration: Default::default(),
+            last_single_simulationstep_duration: Default::default(),
             last_simulationstep_count: 0,
         }
     }
@@ -66,16 +68,19 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 60*4;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 60*16;
         const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
         self.last_simulationstep_count = 0;
+
+        let time_sim_start = std::time::Instant::now();
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
             let time_start = std::time::Instant::now();
             self.particles.physics_step(TIME_STEP/2.0);
-            self.last_simulationstep_duration = Instant::now() - time_start;
+            self.last_single_simulationstep_duration = Instant::now() - time_start;
             self.last_simulationstep_count += 1;
         }
+        self.last_total_simulationstep_duration = Instant::now() - time_sim_start;
         Ok(())
     }
 
@@ -85,10 +90,11 @@ impl EventHandler for MainState {
         let fps = timer::fps(ctx);
 
         let fps_display = graphics::Text::new(format!(
-            "{:.2}ms, FPS: {:.2}\nSimStep duration {:.2}ms ({} per frame)",
+            "{:.2}ms, FPS: {:.2}\nSim duration: {:.2}ms | Single Step: {:.2}ms ({} per frame)",
             1000.0 / fps,
             fps,
-            self.last_simulationstep_duration.as_secs_f64() * 1000.0,
+            self.last_total_simulationstep_duration.as_secs_f64() * 1000.0,
+            self.last_single_simulationstep_duration.as_secs_f64() * 1000.0,
             self.last_simulationstep_count
         ));
         graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
@@ -112,7 +118,7 @@ impl EventHandler for MainState {
             a: 1.0,
         };
         for (p, a) in self.particles.positions.iter().zip(self.particles.accellerations.iter()) {
-            let c = heatmap_color(a.norm() as f32);
+            let c = heatmap_color(a.norm() * 0.01 as f32);
             let rp: RenderPoint = na::convert(*p);
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }

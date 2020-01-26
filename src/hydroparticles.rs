@@ -67,9 +67,12 @@ impl HydroParticles {
         self.fluid_density / self.particle_density
     }
 
-    fn pressure(&self, local_density: Real) -> Real {
+    // Equation of State (EOS)
+    fn pressure(fluid_density: Real, local_density: Real) -> Real {
         // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
-        self.fluid_speedofsound_sq * (local_density - self.fluid_density)
+        //self.fluid_speedofsound_sq * (local_density - self.fluid_density)
+        // Tait equation as in Becker & Teschner 2007 WCSPH07
+        0.2 * ((local_density / fluid_density).powi(7) - 1.0)
     }
 
     fn particle_radius_from_particle_density(particle_density: Real) -> Real {
@@ -215,7 +218,7 @@ impl HydroParticles {
 
                 // TODO: Schechter et al. is right - physical viscosity doesn't make sense if there's XSPH!!!
                 // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
-                *accelleration += inv_dt * 0.2 * mass * density_kernel.evaluate(r_sq, r) / rhoj * velocitydiff;
+                *accelleration += inv_dt * 0.08 * mass * density_kernel.evaluate(r_sq, r) / rhoj * velocitydiff; // 0.05
             }
 
             // Boundary forces as described by
