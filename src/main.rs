@@ -8,12 +8,11 @@ use na::clamp;
 use std::time::{Duration, Instant};
 
 mod camera;
-mod hydroparticles;
-mod smoothing_kernel;
+mod sph;
 mod units;
 
+use sph::*;
 use camera::*;
-use hydroparticles::*;
 use units::*;
 
 fn main() -> GameResult {

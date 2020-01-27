@@ -1,10 +1,11 @@
-use super::units::*;
+use crate::units::*;
 use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use rayon::prelude::*;
 
-use crate::smoothing_kernel;
-use crate::smoothing_kernel::Kernel;
+use super::smoothing_kernel as smoothing_kernel;
+use super::smoothing_kernel::*;
+use super::solver::Solver;
 
 pub trait ViscosityModel {
     // computes viscious accelleration for a particle i
@@ -53,12 +54,6 @@ impl ViscosityModel for PhysicalViscosityModel {
     fn compute_viscous_accelleration(&self, _dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector {
         self.fluid_viscosity * massj * self.kernel.laplacian(r_sq, r) / rhoj * velocitydiff
     }
-}
-
-pub trait Solver {
-    // performs a single simulation step.
-    // todo: how to handle adaptive time stepping. Probably make up dt and return it.
-    fn simulation_step(&self, particles: &mut HydroParticles, dt: Real);
 }
 
 // Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
