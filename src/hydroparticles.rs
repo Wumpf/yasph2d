@@ -6,6 +6,186 @@ use rayon::prelude::*;
 use crate::smoothing_kernel;
 use crate::smoothing_kernel::Kernel;
 
+pub trait ViscosityModel {
+    // computes viscious accelleration for a particle i
+    //
+    // todo. integrating like this seems to be tricky! that's a ton of parameters that might be unused!
+    // sphlishsphlash is just reiterating on all particles instead for the viscosity model
+    // maybe set some of them and store model specific factor.
+    fn compute_viscous_accelleration(&self, dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector;
+}
+
+// XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
+pub struct XSPHViscosityModel {
+    pub epsilon: Real, // 0.05
+    kernel: smoothing_kernel::Poly6,
+}
+impl XSPHViscosityModel {
+    pub fn new(smoothing_length: Real) -> XSPHViscosityModel {
+        XSPHViscosityModel {
+            epsilon: 0.05,
+            kernel: smoothing_kernel::Poly6::new(smoothing_length),
+        }
+    }
+}
+impl ViscosityModel for XSPHViscosityModel {
+    #[inline]
+    fn compute_viscous_accelleration(&self, dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector {
+        self.epsilon * massj * self.kernel.evaluate(r_sq, r) / (rhoj * dt) * velocitydiff
+    }
+}
+
+// Laplacian based physical model as in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
+pub struct PhysicalViscosityModel {
+    pub fluid_viscosity: Real, // the dynamic viscosity of this fluid in Pa*s (μ, mu)
+    kernel: smoothing_kernel::Viscosity,
+}
+impl PhysicalViscosityModel {
+    pub fn new(smoothing_length: Real) -> PhysicalViscosityModel {
+        PhysicalViscosityModel {
+            fluid_viscosity: 1.0016 / 1000.0, // Water is 1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
+            kernel: smoothing_kernel::Viscosity::new(smoothing_length),
+        }
+    }
+}
+impl ViscosityModel for PhysicalViscosityModel {
+    #[inline]
+    fn compute_viscous_accelleration(&self, _dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector {
+        self.fluid_viscosity * massj * self.kernel.laplacian(r_sq, r) / rhoj * velocitydiff
+    }
+}
+
+pub trait Solver {
+    // performs a single simulation step.
+    // todo: how to handle adaptive time stepping. Probably make up dt and return it.
+    fn simulation_step(&self, particles: &mut HydroParticles, dt: Real);
+}
+
+// Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
+// https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf
+pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
+    viscosity_model: TViscosityModel,
+
+    density_kernel: smoothing_kernel::Poly6,
+    pressure_kernel: smoothing_kernel::Spiky,
+
+    boundary_force_factor: Real,
+}
+impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
+    pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> WCSPHSolver<TViscosityModel> {
+        WCSPHSolver {
+            viscosity_model: viscosity_model,
+
+            density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
+            pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
+
+            boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
+        }
+    }
+
+    // Equation of State (EOS)
+    fn pressure(fluid_density: Real, local_density: Real) -> Real {
+        // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
+        //self.fluid_speedofsound_sq * (local_density - self.fluid_density)
+        // Tait equation as in Becker & Teschner 2007 WCSPH07
+        2.0 * ((local_density / fluid_density).powi(7) - 1.0) // 2.0 is a hack
+    }
+
+    fn update_accellerations(&self, particles: &mut HydroParticles, dt: Real) {
+        let mass = particles.particle_mass();
+
+        let gravity = Vector::new(0.0, -9.81);
+
+        // pressure & viscosity forces
+        // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
+        // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
+
+        // TODO: This is just insane.
+        let positions = &particles.positions;
+        let densities = &particles.densities;
+        let velocities = &particles.velocities;
+        let pressure_kernel = &self.pressure_kernel;
+        let density_kernel = &self.density_kernel;
+        let smoothing_length_sq = particles.smoothing_length_sq;
+        let boundary_particles = &particles.boundary_particles;
+        let fluid_density = particles.fluid_density;
+
+        particles
+            .accellerations
+            .par_iter_mut()
+            .zip(positions.par_iter())
+            .zip(densities.par_iter())
+            .zip(velocities.par_iter())
+            .for_each(|(((accelleration, ri), rhoi), vi)| {
+                *accelleration = gravity;
+
+                let pi = Self::pressure(fluid_density, *rhoi);
+
+                // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
+                for ((rj, rhoj), vj) in positions.iter().zip(densities.iter()).zip(velocities.iter()) {
+                    let ri_rj = ri - rj;
+                    let r_sq = ri_rj.norm_squared();
+                    if r_sq > smoothing_length_sq {
+                        continue;
+                    }
+                    let r = r_sq.sqrt();
+
+                    let pj = Self::pressure(fluid_density, *rhoj);
+
+                    // accelleration from pressure force
+                    // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
+                    // This is a weakly compressible model (WCSPH)
+                    let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
+                    *accelleration += pressure_unsmoothed * pressure_kernel.gradient(ri_rj, r_sq, r);
+
+                    *accelleration += self.viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, *rhoj, vj - vi);
+                }
+
+                // Boundary forces as described by
+                // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
+                // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
+                // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
+                for rj in boundary_particles.iter() {
+                    let ri_rj = ri - rj;
+                    let r_sq = ri_rj.norm_squared();
+                    if r_sq > smoothing_length_sq {
+                        continue;
+                    }
+                    *accelleration += self.boundary_force_factor * density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
+                }
+            });
+    }
+}
+
+impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver<TViscosityModel> {
+    fn simulation_step(&self, particles: &mut HydroParticles, dt: Real) {
+        assert_eq!(particles.positions.len(), particles.velocities.len());
+        assert_eq!(particles.positions.len(), particles.accellerations.len());
+
+        // leap frog integration scheme with integer steps
+        // https://en.wikipedia.org/wiki/Leapfrog_integration
+        for ((pos, v), a) in particles
+            .positions
+            .iter_mut()
+            .zip(particles.velocities.iter_mut())
+            .zip(particles.accellerations.iter())
+        {
+            *pos += *v * dt + a * (0.5 * dt * dt);
+            // partial update of velocity.
+            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
+            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
+            *v += 0.5 * dt * a;
+        }
+
+        particles.update_densities();
+        self.update_accellerations(particles, dt);
+
+        // part 2 of leap frog integration. Finish updating velocity.
+        for (v, a) in particles.velocities.iter_mut().zip(particles.accellerations.iter()) {
+            *v += 0.5 * dt * a;
+        }
+    }
+}
 
 pub struct HydroParticles {
     pub positions: Vec<Point>,
@@ -16,27 +196,18 @@ pub struct HydroParticles {
 
     smoothing_length_sq: Real, // typically expressed as 'h'
     smoothing_length: Real,
-    particle_density: Real,    // #particles/m² for resting fluid
-    fluid_density: Real,       // kg/m² for the resting fluid (ρ, rho)
-    fluid_speedofsound_sq: Real, // speed of sound in this fluid squared
-    fluid_viscosity: Real,     // the dynamic viscosity of this fluid in Pa*s (μ, mu)
+    particle_density: Real, // #particles/m² for resting fluid
+    fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
     density_kernel: smoothing_kernel::Poly6,
-    pressure_kernel: smoothing_kernel::Spiky,
-    viscosity_kernel: smoothing_kernel::Viscosity,
-
-    boundary_force_factor: Real,
 
     densities: Vec<Real>, // Local densities ρ
 }
-
 impl HydroParticles {
     pub fn new(
         smoothing_factor: Real,
         particle_density: Real, // #particles/m² for resting fluid
         fluid_density: Real,    // kg/m² for the resting fluid
-        fluid_speedofsound: Real, // speed of sound in this fluid
-        fluid_viscosity: Real,  // the dynamic viscosity of this fluid in Pa*s (μ, mu)
     ) -> HydroParticles {
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
         HydroParticles {
@@ -50,29 +221,19 @@ impl HydroParticles {
             smoothing_length_sq: smoothing_length * smoothing_length,
             particle_density: particle_density,
             fluid_density: fluid_density,
-            fluid_speedofsound_sq: fluid_speedofsound * fluid_speedofsound,
-            fluid_viscosity: fluid_viscosity,
 
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
-            pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
-            viscosity_kernel: smoothing_kernel::Viscosity::new(smoothing_length),
-
-            boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
 
             densities: Vec::new(),
         }
     }
 
-    pub fn particle_mass(&self) -> Real {
-        self.fluid_density / self.particle_density
+    pub fn smoothing_length(&self) -> Real {
+        self.smoothing_length
     }
 
-    // Equation of State (EOS)
-    fn pressure(fluid_density: Real, local_density: Real) -> Real {
-        // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
-        //self.fluid_speedofsound_sq * (local_density - self.fluid_density)
-        // Tait equation as in Becker & Teschner 2007 WCSPH07
-        1.0 * ((local_density / fluid_density).powi(7) - 1.0)
+    pub fn particle_mass(&self) -> Real {
+        self.fluid_density / self.particle_density
     }
 
     fn particle_radius_from_particle_density(particle_density: Real) -> Real {
@@ -157,105 +318,5 @@ impl HydroParticles {
                 *density += density_contribution;
             }
         });
-    }
-
-    fn update_accellerations(&mut self, dt: Real) {
-        let mass = self.particle_mass();
-
-        let gravity = Vector::new(0.0, -9.81);
-        let inv_dt = 1.0 / dt;
-
-        // pressure & viscosity forces
-        // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
-        // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
-        
-        // TODO: This is just insane.
-        let positions = &self.positions;
-        let densities = &self.densities;
-        let velocities = &self.velocities;
-        let pressure_kernel = &self.pressure_kernel;
-        let viscosity_kernel = &self.viscosity_kernel;
-        let density_kernel = &self.density_kernel;
-        let smoothing_length_sq = self.smoothing_length_sq;
-        let boundary_particles = &self.boundary_particles;
-        let boundary_force_factor = self.boundary_force_factor;
-        let fluid_viscosity = self.fluid_viscosity;
-        let fluid_density = self.fluid_density;
-
-        self.accellerations.par_iter_mut()
-            .zip(positions.par_iter())
-            .zip(densities.par_iter())
-            .zip(velocities.par_iter())
-            .for_each(|(((accelleration, ri), rhoi), vi)| {
-            *accelleration = gravity;
-
-            let pi = HydroParticles::pressure(fluid_density, *rhoi);
-
-            // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
-            for ((rj, rhoj), vj) in positions.iter().zip(densities.iter()).zip(velocities.iter()) {
-                let ri_rj = ri - rj;
-                let r_sq = ri_rj.norm_squared();
-                if r_sq > smoothing_length_sq {
-                    continue;
-                }
-                let r = r_sq.sqrt();
-
-                let pj = HydroParticles::pressure(fluid_density, *rhoj);
-
-                // accelleration from pressure force
-                // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-                // This is a weakly compressible model (WCSPH)
-                let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                let pressure = pressure_unsmoothed * pressure_kernel.gradient(ri_rj, r_sq, r);
-
-                // accelleration from viscosity force
-                // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-                let velocitydiff = vj - vi;
-                let viscosity = fluid_viscosity * mass * viscosity_kernel.laplacian(r_sq, r) / (rhoi * rhoj) * velocitydiff;
-
-                let total = pressure + viscosity;
-                *accelleration += total;
-
-                // TODO: Schechter et al. is right - physical viscosity doesn't make sense if there's XSPH!!!
-                // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
-                *accelleration += inv_dt * 0.1 * mass * density_kernel.evaluate(r_sq, r) / rhoj * velocitydiff; // 0.05
-            }
-
-            // Boundary forces as described by
-            // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
-            // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
-            // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
-            for rj in boundary_particles.iter() {
-                let ri_rj = ri - rj;
-                let r_sq = ri_rj.norm_squared();
-                if r_sq > smoothing_length_sq {
-                    continue;
-                }
-                *accelleration += boundary_force_factor * density_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
-            }
-        });
-    }
-
-    pub fn physics_step(&mut self, dt: Real) {
-        assert_eq!(self.positions.len(), self.velocities.len());
-        assert_eq!(self.positions.len(), self.accellerations.len());
-
-        // leap frog integration scheme with integer steps
-        // https://en.wikipedia.org/wiki/Leapfrog_integration
-        for ((pos, v), a) in self.positions.iter_mut().zip(self.velocities.iter_mut()).zip(self.accellerations.iter()) {
-            *pos += *v * dt + a * (0.5 * dt * dt);
-            // partial update of velocity.
-            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
-            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
-            *v += 0.5 * dt * a;
-        }
-
-        self.update_densities();
-        self.update_accellerations(dt);
-
-        // part 2 of leap frog integration. Finish updating velocity.
-        for (v, a) in self.velocities.iter_mut().zip(self.accellerations.iter()) {
-            *v += 0.5 * dt * a;
-        }
     }
 }

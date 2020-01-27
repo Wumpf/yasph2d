@@ -27,6 +27,8 @@ fn main() -> GameResult {
 
 struct MainState {
     particles: HydroParticles,
+    sph_solver: Box<dyn Solver>,
+
     camera: Camera,
     last_total_simulationstep_duration: Duration,
     last_single_simulationstep_duration: Duration,
@@ -38,17 +40,22 @@ impl MainState {
         let mut particles = HydroParticles::new(
             1.2,    // smoothing factor
             2500.0, // #particles/m²
-            100.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
-            1.5,    //1500.0, // speed of sound in water in m/s
-            1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
+            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
         );
         particles.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
         particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(1.5, 0.0));
         particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.5));
         particles.add_boundary_line(&Point::new(1.5, 0.0), &Point::new(1.5, 1.5));
 
+        let mut xsph = XSPHViscosityModel::new(particles.smoothing_length());
+        xsph.epsilon = 0.1;
+        let mut physicalviscosity = PhysicalViscosityModel::new(particles.smoothing_length());
+        physicalviscosity.fluid_viscosity = 0.01;
+        let sph_solver = WCSPHSolver::new(xsph, particles.smoothing_length());
+
         MainState {
             particles: particles,
+            sph_solver: Box::new(sph_solver),
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
             last_total_simulationstep_duration: Default::default(),
             last_single_simulationstep_duration: Default::default(),
@@ -68,7 +75,7 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 60*20;
+        const DESIRED_UPDATES_PER_SECOND: u32 = 60 * 20;
         const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
         self.last_simulationstep_count = 0;
@@ -77,10 +84,11 @@ impl EventHandler for MainState {
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
             let time_start = std::time::Instant::now();
 
-            if timer::ticks(ctx) < 80 { // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
-                self.particles.physics_step(0.0000000001);
+            if timer::ticks(ctx) < 80 {
+                // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
+                self.sph_solver.simulation_step(&mut self.particles, 0.0000000001);
             } else {
-                self.particles.physics_step(TIME_STEP);
+                self.sph_solver.simulation_step(&mut self.particles, TIME_STEP);
             }
 
             self.last_single_simulationstep_duration = Instant::now() - time_start;
