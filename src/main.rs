@@ -13,6 +13,7 @@ mod units;
 
 use camera::*;
 use units::*;
+use sph::*;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")

@@ -1,4 +1,4 @@
-use super::viscositymodel::ViscosityModel;
+use super::ViscosityModel;
 
 use super::super::smoothing_kernel::*;
 use crate::units::*;
