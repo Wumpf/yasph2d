@@ -6,55 +6,8 @@ use rayon::prelude::*;
 use super::smoothing_kernel as smoothing_kernel;
 use super::smoothing_kernel::*;
 use super::solver::Solver;
+use super::viscositymodel::ViscosityModel;
 
-pub trait ViscosityModel {
-    // computes viscious accelleration for a particle i
-    //
-    // todo. integrating like this seems to be tricky! that's a ton of parameters that might be unused!
-    // sphlishsphlash is just reiterating on all particles instead for the viscosity model
-    // maybe set some of them and store model specific factor.
-    fn compute_viscous_accelleration(&self, dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector;
-}
-
-// XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
-pub struct XSPHViscosityModel {
-    pub epsilon: Real, // 0.05
-    kernel: smoothing_kernel::Poly6,
-}
-impl XSPHViscosityModel {
-    pub fn new(smoothing_length: Real) -> XSPHViscosityModel {
-        XSPHViscosityModel {
-            epsilon: 0.05,
-            kernel: smoothing_kernel::Poly6::new(smoothing_length),
-        }
-    }
-}
-impl ViscosityModel for XSPHViscosityModel {
-    #[inline]
-    fn compute_viscous_accelleration(&self, dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector {
-        self.epsilon * massj * self.kernel.evaluate(r_sq, r) / (rhoj * dt) * velocitydiff
-    }
-}
-
-// Laplacian based physical model as in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-pub struct PhysicalViscosityModel {
-    pub fluid_viscosity: Real, // the dynamic viscosity of this fluid in Pa*s (μ, mu)
-    kernel: smoothing_kernel::Viscosity,
-}
-impl PhysicalViscosityModel {
-    pub fn new(smoothing_length: Real) -> PhysicalViscosityModel {
-        PhysicalViscosityModel {
-            fluid_viscosity: 1.0016 / 1000.0, // Water is 1.0016 / 1000.0, // viscosity of water at 20 degrees in Pa*s
-            kernel: smoothing_kernel::Viscosity::new(smoothing_length),
-        }
-    }
-}
-impl ViscosityModel for PhysicalViscosityModel {
-    #[inline]
-    fn compute_viscous_accelleration(&self, _dt: Real, r_sq: Real, r: Real, massj: Real, rhoj: Real, velocitydiff: Vector) -> Vector {
-        self.fluid_viscosity * massj * self.kernel.laplacian(r_sq, r) / rhoj * velocitydiff
-    }
-}
 
 // Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
 // https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf

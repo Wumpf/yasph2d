@@ -46,9 +46,9 @@ impl MainState {
         particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.5));
         particles.add_boundary_line(&Point::new(1.5, 0.0), &Point::new(1.5, 1.5));
 
-        let mut xsph = XSPHViscosityModel::new(particles.smoothing_length());
+        let mut xsph = viscositymodel::XSPHViscosityModel::new(particles.smoothing_length());
         xsph.epsilon = 0.1;
-        let mut physicalviscosity = PhysicalViscosityModel::new(particles.smoothing_length());
+        let mut physicalviscosity = viscositymodel::PhysicalViscosityModel::new(particles.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
         let sph_solver = WCSPHSolver::new(xsph, particles.smoothing_length());
 

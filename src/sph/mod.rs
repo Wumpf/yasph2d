@@ -1,10 +1,9 @@
 pub use self::solver::Solver;
+pub use self::viscositymodel::ViscosityModel;
 pub use self::hydroparticles::HydroParticles;
 pub use self::hydroparticles::WCSPHSolver;
-pub use self::hydroparticles::PhysicalViscosityModel;
-pub use self::hydroparticles::ViscosityModel;
-pub use self::hydroparticles::XSPHViscosityModel;
 
+mod smoothing_kernel;
 mod solver;
 mod hydroparticles;
-mod smoothing_kernel;
+pub mod viscositymodel;
