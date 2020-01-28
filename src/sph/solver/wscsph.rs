@@ -19,7 +19,7 @@ pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
     pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> WCSPHSolver<TViscosityModel> {
         WCSPHSolver {
-            viscosity_model: viscosity_model,
+            viscosity_model,
 
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
             pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),

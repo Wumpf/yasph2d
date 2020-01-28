@@ -35,9 +35,9 @@ impl HydroParticles {
 
             boundary_particles: Vec::new(),
 
-            smoothing_length: smoothing_length,
-            particle_density: particle_density,
-            fluid_density: fluid_density,
+            smoothing_length,
+            particle_density,
+            fluid_density,
 
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
         }
@@ -93,14 +93,14 @@ impl HydroParticles {
         }
     }
 
-    pub fn add_boundary_line(&mut self, start: &Point, end: &Point) {
-        let distance = na::distance(start, end);
+    pub fn add_boundary_line(&mut self, start: Point, end: Point) {
+        let distance = na::distance(&start, &end);
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.boundary_particles.reserve(num_shadow_particles);
         let step = (end - start) / (num_shadow_particles as Real);
 
-        let mut pos = *start;
+        let mut pos = start;
         for _ in 0..num_shadow_particles {
             self.boundary_particles.push(pos);
             pos += step;

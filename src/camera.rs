@@ -25,7 +25,7 @@ impl Camera {
         );
 
         Camera {
-            screen: screen,
+            screen,
             pixel_per_world_unit: pixel_per_world_unit2d.x.min(pixel_per_world_unit2d.y),
             position: world_rect_center,
         }

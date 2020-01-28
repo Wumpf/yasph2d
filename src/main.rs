@@ -12,8 +12,8 @@ mod sph;
 mod units;
 
 use camera::*;
-use units::*;
 use sph::*;
+use units::*;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
@@ -42,9 +42,9 @@ impl MainState {
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
         );
         particles.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
-        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(1.5, 0.0));
-        particles.add_boundary_line(&Point::new(0.0, 0.0), &Point::new(0.0, 1.5));
-        particles.add_boundary_line(&Point::new(1.5, 0.0), &Point::new(1.5, 1.5));
+        particles.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
+        particles.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
+        particles.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
 
         let mut xsph = XSPHViscosityModel::new(particles.smoothing_length());
         xsph.epsilon = 0.1;
@@ -53,7 +53,7 @@ impl MainState {
         let sph_solver = WCSPHSolver::new(xsph, particles.smoothing_length());
 
         MainState {
-            particles: particles,
+            particles,
             sph_solver: Box::new(sph_solver),
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
             last_total_simulationstep_duration: Default::default(),
@@ -85,7 +85,7 @@ impl EventHandler for MainState {
 
             if timer::ticks(ctx) < 80 {
                 // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
-                self.sph_solver.simulation_step(&mut self.particles, 0.0000000001);
+                self.sph_solver.simulation_step(&mut self.particles, 0.000_000_000_1);
             } else {
                 self.sph_solver.simulation_step(&mut self.particles, TIME_STEP);
             }
