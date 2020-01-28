@@ -1,5 +1,5 @@
-use crate::units::Real;
 use super::super::hydroparticles::HydroParticles;
+use crate::units::Real;
 
 pub trait Solver {
     // performs a single simulation step.

@@ -1,9 +1,9 @@
-use crate::units::*;
-use super::Solver;
-use super::super::viscositymodel::ViscosityModel;
-use super::super::smoothing_kernel as smoothing_kernel;
-use super::super::smoothing_kernel::Kernel;
 use super::super::hydroparticles::HydroParticles;
+use super::super::smoothing_kernel;
+use super::super::smoothing_kernel::Kernel;
+use super::super::viscositymodel::ViscosityModel;
+use super::Solver;
+use crate::units::*;
 use rayon::prelude::*;
 
 // Solver LOOSELY based on Becker & Teschner 2007 WCSPH07

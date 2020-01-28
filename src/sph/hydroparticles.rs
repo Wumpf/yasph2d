@@ -3,8 +3,8 @@ use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use rayon::prelude::*;
 
+use super::smoothing_kernel;
 use super::smoothing_kernel::Kernel;
-use super::smoothing_kernel as smoothing_kernel;
 
 pub struct HydroParticles {
     pub positions: Vec<Point>,
@@ -19,7 +19,6 @@ pub struct HydroParticles {
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
     density_kernel: smoothing_kernel::Poly6,
-
 }
 impl HydroParticles {
     pub fn new(
@@ -39,7 +38,7 @@ impl HydroParticles {
             smoothing_length: smoothing_length,
             particle_density: particle_density,
             fluid_density: fluid_density,
-            
+
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
         }
     }

@@ -1,6 +1,6 @@
 pub use self::hydroparticles::HydroParticles;
-pub use self::viscositymodel::*;
 pub use self::solver::*;
+pub use self::viscositymodel::*;
 
 mod hydroparticles;
 mod smoothing_kernel;
