@@ -11,8 +11,8 @@ mod camera;
 mod sph;
 mod units;
 
-use sph::*;
 use camera::*;
+use sph::*;
 use units::*;
 
 fn main() -> GameResult {

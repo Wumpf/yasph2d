@@ -1,7 +1,7 @@
 use super::viscositymodel::ViscosityModel;
 
-use crate::units::*;
 use super::super::smoothing_kernel::*;
+use crate::units::*;
 
 // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
 pub struct XSPHViscosityModel {

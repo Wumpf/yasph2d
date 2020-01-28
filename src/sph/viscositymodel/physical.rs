@@ -1,7 +1,7 @@
 use super::viscositymodel::ViscosityModel;
 
-use crate::units::*;
 use super::super::smoothing_kernel::*;
+use crate::units::*;
 
 // Laplacian based physical model as in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
 pub struct PhysicalViscosityModel {

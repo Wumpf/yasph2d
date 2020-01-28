@@ -3,11 +3,10 @@ use ggez::graphics::Rect;
 use ggez::nalgebra as na;
 use rayon::prelude::*;
 
-use super::smoothing_kernel as smoothing_kernel;
+use super::smoothing_kernel;
 use super::smoothing_kernel::*;
 use super::solver::Solver;
 use super::viscositymodel::ViscosityModel;
-
 
 // Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
 // https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf
