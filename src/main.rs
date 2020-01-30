@@ -25,7 +25,7 @@ fn main() -> GameResult {
 }
 
 struct MainState {
-    particles: HydroParticles,
+    particles: FluidParticleWorld,
     sph_solver: Box<dyn Solver>,
 
     camera: Camera,
@@ -36,7 +36,7 @@ struct MainState {
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
-        let mut particles = HydroParticles::new(
+        let mut particles = FluidParticleWorld::new(
             1.2,    // smoothing factor
             2500.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
@@ -130,12 +130,12 @@ impl EventHandler for MainState {
             b: 0.2,
             a: 1.0,
         };
-        for (p, a) in self.particles.positions.iter().zip(self.particles.accellerations.iter()) {
-            let c = heatmap_color(a.norm() * 0.01 as f32);
+        for (p, a) in self.particles.particles.positions.iter().zip(self.particles.particles.accellerations.iter()) {
+            let c = heatmap_color((a.norm() * 0.01) as f32);
             let rp: RenderPoint = na::convert(*p);
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
-        for p in self.particles.boundary_particles.iter() {
+        for p in self.particles.particles.boundary_particles.iter() {
             let rp: RenderPoint = na::convert(*p);
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(boundary_color))?;
         }

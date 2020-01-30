@@ -6,40 +6,51 @@ use rayon::prelude::*;
 use super::smoothing_kernel;
 use super::smoothing_kernel::Kernel;
 
-pub struct HydroParticles {
+pub struct Particles
+{
     pub positions: Vec<Point>,
     pub velocities: Vec<Vector>,
     pub accellerations: Vec<Vector>,
     pub densities: Vec<Real>, // Local densities ρ
 
     pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
+}
+
+pub struct FluidParticleWorld {
+    pub particles: Particles,
 
     smoothing_length: Real, // typically expressed as 'h'
     particle_density: Real, // #particles/m² for resting fluid
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
     density_kernel: smoothing_kernel::Poly6,
+
+    pub gravity: Vector, // global gravity force in m/s² (== N/kg)
 }
-impl HydroParticles {
+impl FluidParticleWorld {
     pub fn new(
         smoothing_factor: Real,
         particle_density: Real, // #particles/m² for resting fluid
         fluid_density: Real,    // kg/m² for the resting fluid
-    ) -> HydroParticles {
+    ) -> FluidParticleWorld {
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
-        HydroParticles {
-            positions: Vec::new(),
-            velocities: Vec::new(),
-            accellerations: Vec::new(),
-            densities: Vec::new(),
+        FluidParticleWorld {
+            particles: Particles {
+                positions: Vec::new(),
+                velocities: Vec::new(),
+                accellerations: Vec::new(),
+                densities: Vec::new(),
 
-            boundary_particles: Vec::new(),
+                boundary_particles: Vec::new(),
+            },
 
             smoothing_length,
             particle_density,
             fluid_density,
 
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
+
+            gravity: Vector::new(0.0, -9.81),
         }
     }
 
@@ -76,10 +87,10 @@ impl HydroParticles {
         let num_particles_y = std::cmp::max(1, (fluid_rect.h as Real * num_particles_per_meter) as usize);
         let num_particles = num_particles_x * num_particles_y;
 
-        self.positions.reserve(num_particles);
-        self.velocities.resize(self.velocities.len() + num_particles, na::zero());
-        self.densities.resize(self.densities.len() + num_particles, na::zero());
-        self.accellerations.resize(self.accellerations.len() + num_particles, na::zero());
+        self.particles.positions.reserve(num_particles);
+        self.particles.velocities.resize(self.particles.velocities.len() + num_particles, na::zero());
+        self.particles.densities.resize(self.particles.densities.len() + num_particles, na::zero());
+        self.particles.accellerations.resize(self.particles.accellerations.len() + num_particles, na::zero());
 
         let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
         let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));
@@ -87,7 +98,7 @@ impl HydroParticles {
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
                 let jitter = (Vector::new_random() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
-                self.positions
+                self.particles.positions
                     .push(bottom_left + jitter + na::Vector2::new(step * (x as Real), step * (y as Real)));
             }
         }
@@ -97,28 +108,28 @@ impl HydroParticles {
         let distance = na::distance(&start, &end);
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
-        self.boundary_particles.reserve(num_shadow_particles);
+        self.particles.boundary_particles.reserve(num_shadow_particles);
         let step = (end - start) / (num_shadow_particles as Real);
 
         let mut pos = start;
         for _ in 0..num_shadow_particles {
-            self.boundary_particles.push(pos);
+            self.particles.boundary_particles.push(pos);
             pos += step;
         }
     }
 
     pub(crate) fn update_densities(&mut self) {
-        assert_eq!(self.positions.len(), self.densities.len());
+        assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.particle_mass();
 
         // Density contributions are symmetric, but that is hard to use in a parallel loop.
-        let positions = &self.positions;
+        let positions = &self.particles.positions;
         let kernel = &self.density_kernel;
         let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
-        let boundary_particles = &self.boundary_particles;
+        let boundary_particles = &self.particles.boundary_particles;
 
-        self.densities.par_iter_mut().zip(positions.par_iter()).for_each(|(density, ri)| {
+        self.particles.densities.par_iter_mut().zip(positions.par_iter()).for_each(|(density, ri)| {
             *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
             for rj in positions.iter() {
                 let r_sq = na::distance_squared(ri, rj);
