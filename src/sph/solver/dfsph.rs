@@ -46,7 +46,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
         let boundary_particle_particle_mass = fluid_world.particle_mass();
-        alpha_values.par_iter_mut()
+        alpha_values
+            .par_iter_mut()
             .zip(fluid_world.particles.positions.par_iter())
             .for_each(|(alpha_value, ri)| {
                 let mut gradient_square_sum = 0.0;
@@ -77,11 +78,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             });
     }
 
-    fn correct_density_error() {
-
-    }
-
-
+    fn correct_density_error() {}
 }
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver<TViscosityModel> {

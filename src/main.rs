@@ -25,7 +25,7 @@ fn main() -> GameResult {
 }
 
 struct MainState {
-    particles: FluidParticleWorld,
+    fluid_world: FluidParticleWorld,
     sph_solver: Box<dyn Solver>,
 
     camera: Camera,
@@ -36,24 +36,25 @@ struct MainState {
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
-        let mut particles = FluidParticleWorld::new(
+        let mut fluid_world = FluidParticleWorld::new(
             1.2,    // smoothing factor
             2500.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
         );
-        particles.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
-        particles.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
-        particles.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
-        particles.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
+        fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
+        fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
 
-        let mut xsph = XSPHViscosityModel::new(particles.smoothing_length());
+        let mut xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
         xsph.epsilon = 0.1;
-        let mut physicalviscosity = PhysicalViscosityModel::new(particles.smoothing_length());
+        let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
-        let sph_solver = WCSPHSolver::new(xsph, particles.smoothing_length());
+        let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
+        //let sph_solver = DFSPHSolver::new(xsph, fluid_world.smoothing_length());
 
         MainState {
-            particles,
+            fluid_world,
             sph_solver: Box::new(sph_solver),
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
             last_total_simulationstep_duration: Default::default(),
@@ -85,9 +86,9 @@ impl EventHandler for MainState {
 
             if timer::ticks(ctx) < 80 {
                 // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
-                self.sph_solver.simulation_step(&mut self.particles, 0.000_000_000_1);
+                self.sph_solver.simulation_step(&mut self.fluid_world, 0.000_000_000_1);
             } else {
-                self.sph_solver.simulation_step(&mut self.particles, TIME_STEP);
+                self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
             }
 
             self.last_single_simulationstep_duration = Instant::now() - time_start;
@@ -115,7 +116,7 @@ impl EventHandler for MainState {
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
-        let particle_radius = self.particles.suggested_particle_render_radius();
+        let particle_radius = self.fluid_world.suggested_particle_render_radius();
         let particle = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
@@ -130,12 +131,18 @@ impl EventHandler for MainState {
             b: 0.2,
             a: 1.0,
         };
-        for (p, a) in self.particles.particles.positions.iter().zip(self.particles.particles.accellerations.iter()) {
+        for (p, a) in self
+            .fluid_world
+            .particles
+            .positions
+            .iter()
+            .zip(self.fluid_world.particles.accellerations.iter())
+        {
             let c = heatmap_color((a.norm() * 0.01) as f32);
             let rp: RenderPoint = na::convert(*p);
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
-        for p in self.particles.particles.boundary_particles.iter() {
+        for p in self.fluid_world.particles.boundary_particles.iter() {
             let rp: RenderPoint = na::convert(*p);
             graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(boundary_color))?;
         }

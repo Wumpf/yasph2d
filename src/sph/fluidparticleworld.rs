@@ -6,8 +6,7 @@ use rayon::prelude::*;
 use super::smoothing_kernel;
 use super::smoothing_kernel::Kernel;
 
-pub struct Particles
-{
+pub struct Particles {
     pub positions: Vec<Point>,
     pub velocities: Vec<Vector>,
     pub accellerations: Vec<Vector>,
@@ -88,9 +87,15 @@ impl FluidParticleWorld {
         let num_particles = num_particles_x * num_particles_y;
 
         self.particles.positions.reserve(num_particles);
-        self.particles.velocities.resize(self.particles.velocities.len() + num_particles, na::zero());
-        self.particles.densities.resize(self.particles.densities.len() + num_particles, na::zero());
-        self.particles.accellerations.resize(self.particles.accellerations.len() + num_particles, na::zero());
+        self.particles
+            .velocities
+            .resize(self.particles.velocities.len() + num_particles, na::zero());
+        self.particles
+            .densities
+            .resize(self.particles.densities.len() + num_particles, na::zero());
+        self.particles
+            .accellerations
+            .resize(self.particles.accellerations.len() + num_particles, na::zero());
 
         let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
         let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));
@@ -98,7 +103,8 @@ impl FluidParticleWorld {
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
                 let jitter = (Vector::new_random() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
-                self.particles.positions
+                self.particles
+                    .positions
                     .push(bottom_left + jitter + na::Vector2::new(step * (x as Real), step * (y as Real)));
             }
         }
@@ -118,7 +124,7 @@ impl FluidParticleWorld {
         }
     }
 
-    pub(crate) fn update_densities(&mut self) {
+    pub(super) fn update_densities(&mut self) {
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.particle_mass();
@@ -129,24 +135,28 @@ impl FluidParticleWorld {
         let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
         let boundary_particles = &self.particles.boundary_particles;
 
-        self.particles.densities.par_iter_mut().zip(positions.par_iter()).for_each(|(density, ri)| {
-            *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
-            for rj in positions.iter() {
-                let r_sq = na::distance_squared(ri, rj);
-                if r_sq > smoothing_length_sq {
-                    continue;
+        self.particles
+            .densities
+            .par_iter_mut()
+            .zip(positions.par_iter())
+            .for_each(|(density, ri)| {
+                *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
+                for rj in positions.iter() {
+                    let r_sq = na::distance_squared(ri, rj);
+                    if r_sq > smoothing_length_sq {
+                        continue;
+                    }
+                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                    *density += density_contribution;
                 }
-                let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                *density += density_contribution;
-            }
-            for rj in boundary_particles.iter() {
-                let r_sq = na::distance_squared(ri, rj);
-                if r_sq > smoothing_length_sq {
-                    continue;
+                for rj in boundary_particles.iter() {
+                    let r_sq = na::distance_squared(ri, rj);
+                    if r_sq > smoothing_length_sq {
+                        continue;
+                    }
+                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                    *density += density_contribution;
                 }
-                let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                *density += density_contribution;
-            }
-        });
+            });
     }
 }

@@ -46,7 +46,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         let fluid_density = fluid_world.fluid_density();
         let gravity = fluid_world.gravity;
 
-        fluid_world.particles
+        fluid_world
+            .particles
             .accellerations
             .par_iter_mut()
             .zip(velocities.par_iter())
@@ -96,7 +97,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
-        for ((pos, v), a) in fluid_world.particles
+        for ((pos, v), a) in fluid_world
+            .particles
             .positions
             .iter_mut()
             .zip(fluid_world.particles.velocities.iter_mut())
@@ -113,7 +115,12 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         self.update_accellerations(fluid_world, dt);
 
         // part 2 of leap frog integration. Finish updating velocity.
-        for (v, a) in fluid_world.particles.velocities.iter_mut().zip(fluid_world.particles.accellerations.iter()) {
+        for (v, a) in fluid_world
+            .particles
+            .velocities
+            .iter_mut()
+            .zip(fluid_world.particles.accellerations.iter())
+        {
             *v += 0.5 * dt * a;
         }
     }
