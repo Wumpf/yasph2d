@@ -23,7 +23,7 @@ pub struct FluidParticleWorld {
     particle_density: Real, // #particles/m² for resting fluid
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
-    density_kernel: smoothing_kernel::Poly6,
+    pub(super) density_kernel: smoothing_kernel::Poly6,
 
     pub gravity: Vector, // global gravity force in m/s² (== N/kg)
 }

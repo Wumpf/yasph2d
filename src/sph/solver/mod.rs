@@ -1,5 +1,7 @@
+pub use dfsph::DFSPHSolver;
 pub use wscsph::WCSPHSolver;
 
+mod dfsph;
 mod wscsph;
 
 // ------------------------------------------------------
