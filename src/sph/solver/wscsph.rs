@@ -1,4 +1,5 @@
 use super::super::fluidparticleworld::FluidParticleWorld;
+use super::super::fluidparticleworld::Particles;
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
@@ -58,37 +59,27 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 let pi = Self::pressure(fluid_density, rhoi);
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
-                for ((rj, rhoj), vj) in positions.iter().zip(densities.iter()).zip(velocities.iter()) {
-                    let ri_rj = ri - rj;
-                    let r_sq = ri_rj.norm_squared();
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
+                Particles::foreach_neighbor_particle(positions, smoothing_length_sq, ri, #[inline(always)] |j, r_sq, ri_to_rj| {
+                    let rhoj = densities[j];
+                    let pj = Self::pressure(fluid_density, rhoj);
                     let r = r_sq.sqrt();
-
-                    let pj = Self::pressure(fluid_density, *rhoj);
 
                     // accelleration from pressure force
                     // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                     // This is a weakly compressible model (WCSPH)
                     let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                    *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(ri_rj, r_sq, r);
+                    *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(-ri_to_rj, r_sq, r);
 
-                    *accelleration += self.viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, *rhoj, vj - vi);
-                }
+                    *accelleration += self.viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, velocities[j] - vi);
+                });
 
                 // Boundary forces as described by
                 // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
                 // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
                 // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
-                for rj in boundary_particles.iter() {
-                    let ri_rj = ri - rj;
-                    let r_sq = ri_rj.norm_squared();
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
-                    *accelleration += self.boundary_force_factor * self.pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_rj;
-                }
+                Particles::foreach_neighbor_particle_noindex(boundary_particles, smoothing_length_sq, ri, #[inline(always)] |r_sq, ri_to_rj| {
+                    *accelleration -= self.boundary_force_factor * self.pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
+                });
             });
     }
 }

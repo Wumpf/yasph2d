@@ -1,7 +1,8 @@
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
-use super::super::FluidParticleWorld;
+use super::super::fluidparticleworld::FluidParticleWorld;
+use super::super::fluidparticleworld::Particles;
 use super::Solver;
 use crate::units::*;
 use ggez::nalgebra as na;
@@ -49,30 +50,20 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         alpha_values
             .par_iter_mut()
             .zip(fluid_world.particles.positions.par_iter())
-            .for_each(|(alpha_value, ri)| {
+            .for_each(|(alpha_value, &ri)| {
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum: Vector = na::zero();
 
-                for rj in fluid_world.particles.positions.iter() {
-                    let ri_to_rj = rj - ri;
-                    let r_sq = ri_to_rj.norm_squared();
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
+                Particles::foreach_neighbor_particle_noindex(&fluid_world.particles.positions, smoothing_length_sq, ri, #[inline(always)] |r_sq, ri_to_rj| {
                     let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
                     gradient_sum += grad_ij;
                     gradient_square_sum += grad_ij.norm_squared();
-                }
-                for rj in fluid_world.particles.boundary_particles.iter() {
-                    let ri_to_rj = rj - ri;
-                    let r_sq = ri_to_rj.norm_squared();
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
+                });
+                Particles::foreach_neighbor_particle_noindex(&fluid_world.particles.boundary_particles, smoothing_length_sq, ri, #[inline(always)] |r_sq, ri_to_rj| {
                     let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
                     gradient_sum += grad_ij;
                     gradient_square_sum += grad_ij.norm_squared();
-                }
+                });
 
                 *alpha_value = 1.0 / (gradient_sum.norm_squared() + gradient_square_sum);
             });

@@ -15,6 +15,43 @@ pub struct Particles {
     pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
 }
 
+impl Particles {
+    #[inline(always)]
+    pub(super) fn foreach_neighbor_particle(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
+        for (j, rj) in positions.iter().enumerate() {
+            let ri_to_rj = rj - ri;
+            let r_sq = ri_to_rj.norm_squared();
+            if r_sq > smoothing_length_sq {
+                continue;
+            }
+            f(j, r_sq, ri_to_rj);
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn foreach_neighbor_particle_noindex(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real, Vector) -> ()) {
+        for rj in positions.iter() {
+            let ri_to_rj = rj - ri;
+            let r_sq = ri_to_rj.norm_squared();
+            if r_sq > smoothing_length_sq {
+                continue;
+            }
+            f(r_sq, ri_to_rj);
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn foreach_neighbor_particle_compact(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
+        for rj in positions.iter() {
+            let r_sq = na::distance_squared(rj, &ri);
+            if r_sq > smoothing_length_sq {
+                continue;
+            }
+            f(r_sq);
+        }
+    }
+}
+
 pub struct FluidParticleWorld {
     pub particles: Particles,
 
@@ -141,22 +178,15 @@ impl FluidParticleWorld {
             .zip(positions.par_iter())
             .for_each(|(density, ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
-                for rj in positions.iter() {
-                    let r_sq = na::distance_squared(ri, rj);
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
+
+                Particles::foreach_neighbor_particle_compact(positions, smoothing_length_sq, *ri, #[inline(always)] |r_sq| {
                     let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                     *density += density_contribution;
-                }
-                for rj in boundary_particles.iter() {
-                    let r_sq = na::distance_squared(ri, rj);
-                    if r_sq > smoothing_length_sq {
-                        continue;
-                    }
+                });
+                Particles::foreach_neighbor_particle_compact(boundary_particles, smoothing_length_sq, *ri, #[inline(always)] |r_sq| {
                     let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                     *density += density_contribution;
-                }
+                });
             });
     }
 }
