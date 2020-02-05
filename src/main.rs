@@ -29,9 +29,8 @@ struct MainState {
     sph_solver: Box<dyn Solver>,
 
     camera: Camera,
-    last_total_simulationstep_duration: Duration,
-    last_single_simulationstep_duration: Duration,
-    last_simulationstep_count: u32,
+    total_simulationstep_duration: Duration,
+    simulationstep_count: u32,
 }
 
 impl MainState {
@@ -57,9 +56,8 @@ impl MainState {
             fluid_world,
             sph_solver: Box::new(sph_solver),
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
-            last_total_simulationstep_duration: Default::default(),
-            last_single_simulationstep_duration: Default::default(),
-            last_simulationstep_count: 0,
+            total_simulationstep_duration: Default::default(),
+            simulationstep_count: 0,
         }
     }
 }
@@ -78,23 +76,19 @@ impl EventHandler for MainState {
         const DESIRED_UPDATES_PER_SECOND: u32 = 60 * 20;
         const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
 
-        self.last_simulationstep_count = 0;
+        self.simulationstep_count = 0;
 
         let time_sim_start = std::time::Instant::now();
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
-            let time_start = std::time::Instant::now();
-
             if timer::ticks(ctx) < 80 {
                 // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
                 self.sph_solver.simulation_step(&mut self.fluid_world, 0.000_000_000_1);
             } else {
                 self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
             }
-
-            self.last_single_simulationstep_duration = Instant::now() - time_start;
-            self.last_simulationstep_count += 1;
+            self.simulationstep_count += 1;
         }
-        self.last_total_simulationstep_duration = Instant::now() - time_sim_start;
+        self.total_simulationstep_duration = Instant::now() - time_sim_start;
         Ok(())
     }
 
@@ -107,9 +101,9 @@ impl EventHandler for MainState {
             "{:.2}ms, FPS: {:.2}\nSim duration: {:.2}ms | Single Step: {:.2}ms ({} per frame)",
             1000.0 / fps,
             fps,
-            self.last_total_simulationstep_duration.as_secs_f64() * 1000.0,
-            self.last_single_simulationstep_duration.as_secs_f64() * 1000.0,
-            self.last_simulationstep_count
+            self.total_simulationstep_duration.as_secs_f64() * 1000.0,
+            self.total_simulationstep_duration.as_secs_f64() * 1000.0 / self.simulationstep_count as f64,
+            self.simulationstep_count
         ));
         graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
 
