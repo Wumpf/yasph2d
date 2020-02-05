@@ -15,6 +15,8 @@ use camera::*;
 use sph::*;
 use units::*;
 
+use std::collections::VecDeque;
+
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
         .window_setup(conf::WindowSetup::default().title("2d sph").samples(conf::NumSamples::Eight))
@@ -29,9 +31,12 @@ struct MainState {
     sph_solver: Box<dyn Solver>,
 
     camera: Camera,
-    total_simulationstep_duration: Duration,
+    simulation_step_duration_history: VecDeque<Duration>,
+    last_frame_simulation_duration: Duration,
     simulationstep_count: u32,
 }
+
+const SIMULATION_STEP_HISTORY_LENGTH: usize = 200;
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
@@ -56,7 +61,8 @@ impl MainState {
             fluid_world,
             sph_solver: Box::new(sph_solver),
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
-            total_simulationstep_duration: Default::default(),
+            simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
+            last_frame_simulation_duration: Default::default(),
             simulationstep_count: 0,
         }
     }
@@ -80,6 +86,8 @@ impl EventHandler for MainState {
 
         let time_sim_start = std::time::Instant::now();
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
+            let time_step_start = std::time::Instant::now();
+
             if timer::ticks(ctx) < 80 {
                 // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
                 self.sph_solver.simulation_step(&mut self.fluid_world, 0.000_000_000_1);
@@ -87,26 +95,18 @@ impl EventHandler for MainState {
                 self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
             }
             self.simulationstep_count += 1;
+            
+            if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
+                self.simulation_step_duration_history.pop_front();
+            }
+            self.simulation_step_duration_history.push_back(Instant::now() - time_step_start);
         }
-        self.total_simulationstep_duration = Instant::now() - time_sim_start;
+        self.last_frame_simulation_duration = Instant::now() - time_sim_start;
         Ok(())
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, [0.4, 0.4, 0.45, 1.0].into());
-
-        let fps = timer::fps(ctx);
-
-        let fps_display = graphics::Text::new(format!(
-            "{:.2}ms, FPS: {:.2}\nSim duration: {:.2}ms | Single Step: {:.2}ms ({} per frame)",
-            1000.0 / fps,
-            fps,
-            self.total_simulationstep_duration.as_secs_f64() * 1000.0,
-            self.total_simulationstep_duration.as_secs_f64() * 1000.0 / self.simulationstep_count as f64,
-            self.simulationstep_count
-        ));
-        graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
-
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
@@ -143,6 +143,21 @@ impl EventHandler for MainState {
 
         graphics::pop_transform(ctx);
         graphics::apply_transformations(ctx)?;
+
+        {
+            let fps = timer::fps(ctx);
+            let average_simulation_step_duration = self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
+
+            let fps_display = graphics::Text::new(format!(
+                "{:.2}ms, FPS: {:.2}\nSim duration: {:.2}ms ({} steps)| Single Step (averaged): {:.2}ms",
+                1000.0 / fps,
+                fps,
+                self.last_frame_simulation_duration.as_secs_f64() * 1000.0,
+                self.simulationstep_count,
+                average_simulation_step_duration.as_secs_f64() * 1000.0,
+            ));
+            graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
+        }
 
         graphics::present(ctx)?;
         Ok(())
