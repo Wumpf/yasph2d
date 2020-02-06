@@ -1,8 +1,8 @@
+use super::super::fluidparticleworld::FluidParticleWorld;
+use super::super::fluidparticleworld::Particles;
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
-use super::super::fluidparticleworld::FluidParticleWorld;
-use super::super::fluidparticleworld::Particles;
 use super::Solver;
 use crate::units::*;
 use ggez::nalgebra as na;
@@ -21,6 +21,8 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
 
     // Recomputed every frame, only here to avoid realloc.
     predicted_velocities: Vec<Vector>,
+    // Recomputed every frame, only here to avoid realloc.
+    predicted_densities: Vec<Real>,
     // Recomputed every frame, but needs to be up to date at start of simulation step.
     alpha_values: Vec<Real>,
 }
@@ -36,6 +38,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             alpha_values: vec![],
             predicted_velocities: vec![],
+            predicted_densities: vec![],
         }
     }
 
@@ -44,6 +47,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     // However, all uses of the factor in the paper divide density again, so no need for having it in here in the first place!
     // (seemed to make sense for derivation though :))
     fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld) {
+        const EPSILON: Real = 0e-6;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
         let boundary_particle_particle_mass = fluid_world.particle_mass();
@@ -54,22 +58,114 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum: Vector = na::zero();
 
-                Particles::foreach_neighbor_particle_noindex(&fluid_world.particles.positions, smoothing_length_sq, ri, #[inline(always)] |r_sq, ri_to_rj| {
-                    let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
-                    gradient_sum += grad_ij;
-                    gradient_square_sum += grad_ij.norm_squared();
-                });
-                Particles::foreach_neighbor_particle_noindex(&fluid_world.particles.boundary_particles, smoothing_length_sq, ri, #[inline(always)] |r_sq, ri_to_rj| {
-                    let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
-                    gradient_sum += grad_ij;
-                    gradient_square_sum += grad_ij.norm_squared();
-                });
+                Particles::foreach_neighbor_particle_noindex(
+                    &fluid_world.particles.positions,
+                    smoothing_length_sq,
+                    ri,
+                    #[inline(always)]
+                    |r_sq, ri_to_rj| {
+                        let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
+                        gradient_sum += grad_ij;
+                        gradient_square_sum += grad_ij.norm_squared();
+                    },
+                );
+                Particles::foreach_neighbor_particle_noindex(
+                    &fluid_world.particles.boundary_particles,
+                    smoothing_length_sq,
+                    ri,
+                    #[inline(always)]
+                    |r_sq, ri_to_rj| {
+                        let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
+                        gradient_sum += grad_ij;
+                        gradient_square_sum += grad_ij.norm_squared();
+                    },
+                );
 
-                *alpha_value = 1.0 / (gradient_sum.norm_squared() + gradient_square_sum);
+                *alpha_value = 1.0 / (gradient_sum.norm_squared() + gradient_square_sum + EPSILON);
             });
     }
 
-    fn correct_density_error() {}
+    fn predict_densities(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
+        let smoothing_length = fluid_world.smoothing_length();
+        let particle_mass = fluid_world.particle_mass();
+        let predicted_velocities = &self.predicted_velocities;
+
+        self.predicted_densities
+            .par_iter_mut()
+            .zip(fluid_world.particles.densities.par_iter())
+            .zip(fluid_world.particles.positions.par_iter().zip(predicted_velocities.par_iter()))
+            .for_each(|((predicted_densitiy, &original_density), (&ri, &predicted_vi))| {
+                let mut delta = 0.0;
+
+                Particles::foreach_neighbor_particle(
+                    &fluid_world.particles.positions,
+                    smoothing_length,
+                    ri,
+                    #[inline(always)]
+                    |j, r_sq, ri_to_rj| {
+                        let delta_v = predicted_vi - predicted_velocities[j];
+                        delta += delta_v.dot(&fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
+                    },
+                );
+                Particles::foreach_neighbor_particle_noindex(
+                    &fluid_world.particles.boundary_particles,
+                    smoothing_length,
+                    ri,
+                    #[inline(always)]
+                    |r_sq, ri_to_rj| {
+                        let delta_v = predicted_vi;
+                        delta += delta_v.dot(&fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
+                    },
+                );
+                *predicted_densitiy = original_density + delta * particle_mass * dt;
+            });
+    }
+
+    fn update_velocity_prediction(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
+        let smoothing_length = fluid_world.smoothing_length();
+        let particle_mass = fluid_world.particle_mass();
+        let predicted_densities = &self.predicted_densities;
+        let alpha_values = &self.alpha_values;
+        let reference_density = fluid_world.fluid_density();
+        let inv_dt_sq = 1.0 / (dt * dt);
+
+        self.predicted_velocities.par_iter_mut().enumerate()
+            .for_each(|(i, predicted_velocity)| {
+                let mut delta = 0.0;
+                let ki = (predicted_densities[i] - reference_density) * inv_dt_sq * alpha_values[i];
+
+                Particles::foreach_neighbor_particle(
+                    &fluid_world.particles.positions,
+                    smoothing_length,
+                    fluid_world.particles.positions[i],
+                    #[inline(always)]
+                    |j, r_sq, ri_to_rj| {
+                    },
+                );
+                // Particles::foreach_neighbor_particle_noindex(
+                //     &fluid_world.particles.boundary_particles,
+                //     smoothing_length,
+                //     ri,
+                //     #[inline(always)]
+                //     |r_sq, ri_to_rj| {
+                //         let delta_v = predicted_vi;
+                //         delta += delta_v.dot(&fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
+                //     },
+                // );
+            });
+    }
+
+    fn correct_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
+        let dt_sq = dt * dt;
+
+        // todo: proper iteration
+        // todo: warmup
+        for _ in 0..2 {
+            self.predict_densities(dt, fluid_world);
+
+          
+        }
+    }
 }
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver<TViscosityModel> {
@@ -79,6 +175,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         if self.alpha_values.len() != fluid_world.particles.positions.len() {
             self.alpha_values.resize(fluid_world.particles.positions.len(), 0.0 as Real);
             self.predicted_velocities.resize(fluid_world.particles.positions.len(), na::zero());
+            self.predicted_densities.resize(fluid_world.particles.positions.len(), na::zero());
 
             // todo: Update only new particles
             fluid_world.update_densities();
@@ -101,7 +198,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             });
 
         // density correction loop
-        Self::correct_density_error();
+        self.correct_density_error(dt, fluid_world);
 
         // advect particles
         fluid_world
