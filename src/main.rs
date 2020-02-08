@@ -32,7 +32,7 @@ struct MainState {
     particle_mesh: graphics::Mesh,
 
     simulation_step_duration_history: VecDeque<Duration>,
-    last_frame_simulation_duration: Duration,
+    simulation_processing_time: Duration,
     simulationstep_count: u32,
 }
 
@@ -42,8 +42,8 @@ impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut fluid_world = FluidParticleWorld::new(
             1.2,    // smoothing factor
-            1000.0, // #particles/m²
-            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
+            2500.0, // #particles/m²
+            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
         fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
@@ -76,7 +76,7 @@ impl MainState {
             particle_mesh,
 
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
-            last_frame_simulation_duration: Default::default(),
+            simulation_processing_time: Default::default(),
             simulationstep_count: 0,
         }
     }
@@ -101,26 +101,41 @@ fn heatmap_color(t: f32) -> graphics::Color {
     }
 }
 
+const REALTIME_TO_SIMTIME: f32 = 1.0;
+const NUM_DESIRED_SIM_UPDATES_PER_SECOND: u32 = 60 * 20;
+const SIM_TIME_STEP: Real = REALTIME_TO_SIMTIME / (NUM_DESIRED_SIM_UPDATES_PER_SECOND as Real);
+// Number of seconds simulation is allowed to process before slowing down physics time.
+const MAX_ALLOWED_SIM_PROCESSING_TIME: Real = 1.0 / 10.0; // if render takes 0 time this would result in min 10fps (since it doesn't, real min fps is lower)
+
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
-        const DESIRED_UPDATES_PER_SECOND: u32 = 60 * 20;
-        const TIME_STEP: Real = 1.0 / (DESIRED_UPDATES_PER_SECOND as Real);
-
         self.simulationstep_count = 0;
 
-        let time_sim_start = std::time::Instant::now();
-        while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
-            let time_step_start = std::time::Instant::now();
+        let mut current_time = Instant::now();
+        let time_sim_start = current_time;
+        self.simulation_processing_time = Duration::from_secs(0);
+        while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
+            let time_step_start = current_time;
 
-            self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
+            self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
             self.simulationstep_count += 1;
 
             if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
                 self.simulation_step_duration_history.pop_front();
             }
-            self.simulation_step_duration_history.push_back(Instant::now() - time_step_start);
+            current_time = Instant::now();
+            self.simulation_step_duration_history.push_back(current_time - time_step_start);
+            self.simulation_processing_time = current_time - time_sim_start;
+
+            // If we can't process fast enough, consume the remaining residual time.
+            // I.e. we give up on getting physics-time on par to real time.
+            // If we would just break here, check_update_time will keep on trying to catch up!
+            if self.simulation_processing_time.as_secs_f32() > MAX_ALLOWED_SIM_PROCESSING_TIME {
+                while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {}
+                break;
+            }
         }
-        self.last_frame_simulation_duration = Instant::now() - time_sim_start;
+
         Ok(())
     }
 
@@ -167,11 +182,20 @@ impl EventHandler for MainState {
                 "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms",
                 1000.0 / fps,
                 fps,
-                self.last_frame_simulation_duration.as_secs_f64() * 1000.0,
+                self.simulation_processing_time.as_secs_f64() * 1000.0,
                 self.simulationstep_count,
                 average_simulation_step_duration.as_secs_f64() * 1000.0,
             ));
             graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
+
+            //if self.simulation_processing_time.as_secs_f32() / self.simulationstep_count as f32 > TIME_STEP {
+            if self.simulation_processing_time.as_secs_f32() > MAX_ALLOWED_SIM_PROCESSING_TIME {
+                graphics::draw(
+                    ctx,
+                    &graphics::Text::new("REALTIME OFF (max sim processing time hit)"),
+                    (RenderPoint::new(10.0, 50.0), graphics::Color::new(1.0, 0.2, 0.2, 1.0)),
+                )?;
+            }
         }
 
         graphics::present(ctx)?;
