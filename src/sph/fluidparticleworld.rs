@@ -17,7 +17,12 @@ pub struct Particles {
 
 impl Particles {
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
+    pub(super) fn foreach_neighbor_particle(
+        positions: &Vec<Point>,
+        smoothing_length_sq: Real,
+        ri: Point,
+        mut f: impl FnMut(usize, Real, Vector) -> (),
+    ) {
         for (j, rj) in positions.iter().enumerate() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.norm_squared();
@@ -29,7 +34,12 @@ impl Particles {
     }
 
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_noindex(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real, Vector) -> ()) {
+    pub(super) fn foreach_neighbor_particle_noindex(
+        positions: &Vec<Point>,
+        smoothing_length_sq: Real,
+        ri: Point,
+        mut f: impl FnMut(Real, Vector) -> (),
+    ) {
         for rj in positions.iter() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.norm_squared();
@@ -179,14 +189,26 @@ impl FluidParticleWorld {
             .for_each(|(density, ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
 
-                Particles::foreach_neighbor_particle_compact(positions, smoothing_length_sq, *ri, #[inline(always)] |r_sq| {
-                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                    *density += density_contribution;
-                });
-                Particles::foreach_neighbor_particle_compact(boundary_particles, smoothing_length_sq, *ri, #[inline(always)] |r_sq| {
-                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                    *density += density_contribution;
-                });
+                Particles::foreach_neighbor_particle_compact(
+                    positions,
+                    smoothing_length_sq,
+                    *ri,
+                    #[inline(always)]
+                    |r_sq| {
+                        let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                        *density += density_contribution;
+                    },
+                );
+                Particles::foreach_neighbor_particle_compact(
+                    boundary_particles,
+                    smoothing_length_sq,
+                    *ri,
+                    #[inline(always)]
+                    |r_sq| {
+                        let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                        *density += density_contribution;
+                    },
+                );
             });
     }
 }
