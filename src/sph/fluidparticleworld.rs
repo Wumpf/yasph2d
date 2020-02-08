@@ -1,6 +1,6 @@
 use crate::units::*;
-use ggez::graphics::Rect;
 use cgmath::prelude::*;
+use ggez::graphics::Rect;
 use rayon::prelude::*;
 
 use super::smoothing_kernel;
@@ -17,12 +17,7 @@ pub struct Particles {
 
 impl Particles {
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(
-        positions: &Vec<Point>,
-        smoothing_length_sq: Real,
-        ri: Point,
-        mut f: impl FnMut(usize, Real, Vector) -> (),
-    ) {
+    pub(super) fn foreach_neighbor_particle(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
         for (j, rj) in positions.iter().enumerate() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
@@ -35,7 +30,7 @@ impl Particles {
 
     #[inline(always)]
     pub(super) fn foreach_neighbor_particle_noindex(
-        positions: &Vec<Point>,
+        positions: &[Point],
         smoothing_length_sq: Real,
         ri: Point,
         mut f: impl FnMut(Real, Vector) -> (),
@@ -51,7 +46,7 @@ impl Particles {
     }
 
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_compact(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
+    pub(super) fn foreach_neighbor_particle_compact(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
         for rj in positions.iter() {
             let r_sq = rj.distance2(ri);
             if r_sq > smoothing_length_sq {

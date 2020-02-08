@@ -1,6 +1,6 @@
+use cgmath::prelude::*;
 use ggez::event::{self, EventHandler};
 use ggez::graphics::Rect;
-use cgmath::prelude::*;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
 use std::time::{Duration, Instant};
