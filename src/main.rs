@@ -1,9 +1,7 @@
 use ggez::event::{self, EventHandler};
 use ggez::graphics::Rect;
-use ggez::nalgebra as na;
+use cgmath::prelude::*;
 use ggez::{conf, graphics, timer, Context, GameResult};
-
-use na::clamp;
 
 use std::time::{Duration, Instant};
 
@@ -63,7 +61,7 @@ impl MainState {
         let particle_mesh = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
-            na::Point2::new(0.0, 0.0),
+            RenderPoint::origin(),
             particle_radius as f32,
             0.0003,
             graphics::WHITE,
@@ -81,6 +79,16 @@ impl MainState {
             last_frame_simulation_duration: Default::default(),
             simulationstep_count: 0,
         }
+    }
+}
+
+fn clamp(v: f32, min: f32, max: f32) -> f32 {
+    if v < min {
+        min
+    } else if v > max {
+        max
+    } else {
+        v
     }
 }
 
@@ -134,7 +142,7 @@ impl EventHandler for MainState {
             .iter()
             .zip(self.fluid_world.particles.accellerations.iter())
         {
-            let c = heatmap_color((a.norm() * 0.01) as f32);
+            let c = heatmap_color((a.magnitude() * 0.01) as f32);
             let rp: RenderPoint = RenderPoint::new(p.x, p.y);
             graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
@@ -163,7 +171,7 @@ impl EventHandler for MainState {
                 self.simulationstep_count,
                 average_simulation_step_duration.as_secs_f64() * 1000.0,
             ));
-            graphics::draw(ctx, &fps_display, (na::Point2::new(10.0, 10.0), graphics::WHITE))?;
+            graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
         }
 
         graphics::present(ctx)?;

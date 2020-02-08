@@ -1,6 +1,6 @@
 use crate::units::*;
 use ggez::graphics::Rect;
-use ggez::nalgebra as na;
+use cgmath::prelude::*;
 use rayon::prelude::*;
 
 use super::smoothing_kernel;
@@ -25,7 +25,7 @@ impl Particles {
     ) {
         for (j, rj) in positions.iter().enumerate() {
             let ri_to_rj = rj - ri;
-            let r_sq = ri_to_rj.norm_squared();
+            let r_sq = ri_to_rj.magnitude2();
             if r_sq > smoothing_length_sq {
                 continue;
             }
@@ -42,7 +42,7 @@ impl Particles {
     ) {
         for rj in positions.iter() {
             let ri_to_rj = rj - ri;
-            let r_sq = ri_to_rj.norm_squared();
+            let r_sq = ri_to_rj.magnitude2();
             if r_sq > smoothing_length_sq {
                 continue;
             }
@@ -53,7 +53,7 @@ impl Particles {
     #[inline(always)]
     pub(super) fn foreach_neighbor_particle_compact(positions: &Vec<Point>, smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
         for rj in positions.iter() {
-            let r_sq = na::distance_squared(rj, &ri);
+            let r_sq = rj.distance2(ri);
             if r_sq > smoothing_length_sq {
                 continue;
             }
@@ -136,29 +136,29 @@ impl FluidParticleWorld {
         self.particles.positions.reserve(num_particles);
         self.particles
             .velocities
-            .resize(self.particles.velocities.len() + num_particles, na::zero());
+            .resize(self.particles.velocities.len() + num_particles, Zero::zero());
         self.particles
             .densities
-            .resize(self.particles.densities.len() + num_particles, na::zero());
+            .resize(self.particles.densities.len() + num_particles, Zero::zero());
         self.particles
             .accellerations
-            .resize(self.particles.accellerations.len() + num_particles, na::zero());
+            .resize(self.particles.accellerations.len() + num_particles, Zero::zero());
 
         let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
         let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));
         let jitter_factor = step * jitter_amount;
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
-                let jitter = (Vector::new_random() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
+                let jitter = (rand::random::<Vector>() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
                 self.particles
                     .positions
-                    .push(bottom_left + jitter + na::Vector2::new(step * (x as Real), step * (y as Real)));
+                    .push(bottom_left + jitter + Vector::new(step * (x as Real), step * (y as Real)));
             }
         }
     }
 
     pub fn add_boundary_line(&mut self, start: Point, end: Point) {
-        let distance = na::distance(&start, &end);
+        let distance = start.distance2(end);
         let num_particles_per_meter = self.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.particles.boundary_particles.reserve(num_shadow_particles);

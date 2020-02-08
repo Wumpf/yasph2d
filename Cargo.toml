@@ -8,5 +8,6 @@ edition = "2018"
 
 [dependencies]
 ggez = "0.5.1"
+rand = "0.7.3"
 rayon = "1.3.0"
-cgmath = {version= "0.17", features=["mint"]}
+cgmath = { git = "https://github.com/rustgd/cgmath", rev="50a345b", features=["mint", "rand"] }

@@ -5,17 +5,19 @@ use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
 use super::Solver;
 use crate::units::*;
-use ggez::nalgebra as na;
+use cgmath::prelude::*;
 use rayon::prelude::*;
 
 // WCSPH implementation as described in
 // Divergence-Free SPH for Incompressible and Viscious Fluids
 // https://animation.rwth-aachen.de/publication/051/
 pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
+    #[allow(dead_code)]
     viscosity_model: TViscosityModel,
 
     kernel: smoothing_kernel::Poly6,
 
+    #[allow(dead_code)]
     boundary_mass_factor: Real,
 
     // Recomputed every frame, only here to avoid realloc.
@@ -26,6 +28,7 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     alpha_values: Vec<Real>,
 }
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosityModel> {
+    #[allow(dead_code)]
     pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> DFSPHSolver<TViscosityModel> {
         DFSPHSolver {
             viscosity_model,
@@ -48,13 +51,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         const EPSILON: Real = 0e-6;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
-        let boundary_particle_particle_mass = fluid_world.particle_mass();
+        //let boundary_particle_particle_mass = fluid_world.particle_mass();
         alpha_values
             .par_iter_mut()
             .zip(fluid_world.particles.positions.par_iter())
             .for_each(|(alpha_value, &ri)| {
                 let mut gradient_square_sum = 0.0;
-                let mut gradient_sum: Vector = na::zero();
+                let mut gradient_sum: Vector = Zero::zero();
 
                 Particles::foreach_neighbor_particle_noindex(
                     &fluid_world.particles.positions,
@@ -64,7 +67,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     |r_sq, ri_to_rj| {
                         let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
                         gradient_sum += grad_ij;
-                        gradient_square_sum += grad_ij.norm_squared();
+                        gradient_square_sum += grad_ij.magnitude2();
                     },
                 );
                 // Particles::foreach_neighbor_particle_noindex(
@@ -75,11 +78,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 //     |r_sq, ri_to_rj| {
                 //         let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
                 //         gradient_sum += grad_ij;
-                //         gradient_square_sum += grad_ij.norm_squared();
+                //         gradient_square_sum += grad_ij.magnitude2();
                 //     },
                 // );
 
-                *alpha_value = 1.0 / (gradient_sum.norm_squared() + gradient_square_sum).max(EPSILON);
+                *alpha_value = 1.0 / (gradient_sum.magnitude2() + gradient_square_sum).max(EPSILON);
             });
     }
 
@@ -103,7 +106,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j, r_sq, ri_to_rj| {
                         let delta_v = predicted_vi - predicted_velocities[j];
-                        delta += delta_v.dot(&kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
+                        delta += delta_v.dot(kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
                     },
                 );
                 // Particles::foreach_neighbor_particle_noindex(
@@ -130,7 +133,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let kernel = &self.kernel;
 
         self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-            let mut delta: Vector = na::zero();
+            let mut delta: Vector = Zero::zero();
             let ki = (predicted_densities[i] - reference_density) * alpha_values[i];
 
             Particles::foreach_neighbor_particle(
@@ -142,7 +145,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     let kj = (predicted_densities[j] - reference_density) * alpha_values[j];
                     // compared to k values in paper already divided with density and multiplied by dt!
                     delta += (ki + kj) * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
-                }
+                },
             );
             // Particles::foreach_neighbor_particle_noindex(
             //     &fluid_world.particles.boundary_particles,
@@ -175,8 +178,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         // Todo: Not happy about the way added particles are handled here. This sort of works for adding, but removing this way is impossible with this design!
         if self.alpha_values.len() != fluid_world.particles.positions.len() {
             self.alpha_values.resize(fluid_world.particles.positions.len(), 0.0 as Real);
-            self.predicted_velocities.resize(fluid_world.particles.positions.len(), na::zero());
-            self.predicted_densities.resize(fluid_world.particles.positions.len(), na::zero());
+            self.predicted_velocities.resize(fluid_world.particles.positions.len(), Zero::zero());
+            self.predicted_densities.resize(fluid_world.particles.positions.len(), Zero::zero());
 
             // todo: Update only new particles
             fluid_world.update_densities();
@@ -184,7 +187,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         }
 
         // compute non-pressure forces (from scratch)
-        let non_pressure_forces: Vector = na::zero(); //fluid_world.gravity;
+        let non_pressure_forces: Vector = Vector::zero(); //fluid_world.gravity;
 
         // (optional) adapt timestep using CFL condition
         // todo
