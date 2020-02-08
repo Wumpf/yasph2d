@@ -73,7 +73,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                         // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                         // This is a weakly compressible model (WCSPH)
                         let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                        *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(-ri_to_rj, r_sq, r);
+                        *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(ri_to_rj, r_sq, r);
 
                         *accelleration += self
                             .viscosity_model

@@ -17,7 +17,7 @@ impl Spiky {
             h: smoothing_length,
             // 2D normalization factor from Salva https://github.com/rustsim/salva/blob/master/src/kernel/spiky_kernel.rs#L14
             normalizer: 10.0 / (std::f64::consts::PI as Real * smoothing_length.powi(5)),
-            normalizer_grad: -30.0 / (std::f64::consts::PI as Real * smoothing_length.powi(5)),
+            normalizer_grad: 30.0 / (std::f64::consts::PI as Real * smoothing_length.powi(5)),
         }
     }
 }
