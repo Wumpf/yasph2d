@@ -49,7 +49,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     // However, all uses of the factor in the paper divide density again, so no need for having it in here in the first place!
     // (seemed to make sense for derivation though :))
     fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld, kernel: impl Kernel + std::marker::Sync) {
-        const EPSILON: Real = 0e-6;
+        const EPSILON: Real = 1e-6;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
         //let boundary_particle_particle_mass = fluid_world.particle_mass();
@@ -166,7 +166,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     fn correct_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         // todo: proper iteration
         // todo: warmup
-        for _ in 0..2 {
+        for _ in 0..8 {
             self.predict_densities(dt, fluid_world);
             self.update_velocity_prediction(dt, fluid_world);
         }
