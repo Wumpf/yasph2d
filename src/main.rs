@@ -31,18 +31,20 @@ struct MainState {
     sph_solver: Box<dyn Solver>,
 
     camera: Camera,
+    particle_mesh: graphics::Mesh,
+
     simulation_step_duration_history: VecDeque<Duration>,
     last_frame_simulation_duration: Duration,
     simulationstep_count: u32,
 }
 
-const SIMULATION_STEP_HISTORY_LENGTH: usize = 200;
+const SIMULATION_STEP_HISTORY_LENGTH: usize = 20;
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut fluid_world = FluidParticleWorld::new(
             1.2,    // smoothing factor
-            2500.0, // #particles/m²
+            1000.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)... want this to be 100, but lowered for stability
         );
         fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
@@ -57,10 +59,24 @@ impl MainState {
         let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
         //let sph_solver = DFSPHSolver::new(xsph, fluid_world.smoothing_length());
 
+        let particle_radius = fluid_world.suggested_particle_render_radius();
+        let particle_mesh = graphics::Mesh::new_circle(
+            ctx,
+            graphics::DrawMode::fill(),
+            na::Point2::new(0.0, 0.0),
+            particle_radius as f32,
+            0.0003,
+            graphics::WHITE,
+        )
+        .unwrap();
+
         MainState {
             fluid_world,
             sph_solver: Box::new(sph_solver),
+
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
+            particle_mesh,
+
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
             last_frame_simulation_duration: Default::default(),
             simulationstep_count: 0,
@@ -88,14 +104,9 @@ impl EventHandler for MainState {
         while timer::check_update_time(ctx, DESIRED_UPDATES_PER_SECOND) {
             let time_step_start = std::time::Instant::now();
 
-            if timer::ticks(ctx) < 80 {
-                // warmup frames to avoid visible stuttering on startup. TODO: Why do we need them and why os many?
-                self.sph_solver.simulation_step(&mut self.fluid_world, 0.000_000_000_1);
-            } else {
-                self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
-            }
+            self.sph_solver.simulation_step(&mut self.fluid_world, TIME_STEP);
             self.simulationstep_count += 1;
-            
+
             if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
                 self.simulation_step_duration_history.pop_front();
             }
@@ -110,15 +121,6 @@ impl EventHandler for MainState {
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
-        let particle_radius = self.fluid_world.suggested_particle_render_radius();
-        let particle = graphics::Mesh::new_circle(
-            ctx,
-            graphics::DrawMode::fill(),
-            na::Point2::new(0.0, 0.0),
-            particle_radius as f32,
-            0.0003,
-            graphics::WHITE,
-        )?;
         let boundary_color = graphics::Color {
             r: 0.2,
             g: 0.2,
@@ -133,12 +135,16 @@ impl EventHandler for MainState {
             .zip(self.fluid_world.particles.accellerations.iter())
         {
             let c = heatmap_color((a.norm() * 0.01) as f32);
-            let rp: RenderPoint = na::convert(*p);
-            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
+            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
+            graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
         for p in self.fluid_world.particles.boundary_particles.iter() {
-            let rp: RenderPoint = na::convert(*p);
-            graphics::draw(ctx, &particle, ggez::graphics::DrawParam::default().dest(rp).color(boundary_color))?;
+            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
+            graphics::draw(
+                ctx,
+                &self.particle_mesh,
+                ggez::graphics::DrawParam::default().dest(rp).color(boundary_color),
+            )?;
         }
 
         graphics::pop_transform(ctx);
@@ -146,10 +152,11 @@ impl EventHandler for MainState {
 
         {
             let fps = timer::fps(ctx);
-            let average_simulation_step_duration = self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
+            let average_simulation_step_duration =
+                self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
 
             let fps_display = graphics::Text::new(format!(
-                "{:.2}ms, FPS: {:.2}\nSim duration: {:.2}ms ({} steps)| Single Step (averaged): {:.2}ms",
+                "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms",
                 1000.0 / fps,
                 fps,
                 self.last_frame_simulation_duration.as_secs_f64() * 1000.0,

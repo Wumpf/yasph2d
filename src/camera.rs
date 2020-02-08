@@ -1,6 +1,7 @@
 use super::units::*;
+use cgmath::prelude::*;
+use cgmath::{Matrix4, Vector2, Vector4};
 use ggez::graphics::Rect;
-use ggez::nalgebra as na;
 
 // A 2D camera.
 // Maps 2D world coordinates/sizes to screen coordinates/sizes.
@@ -18,7 +19,7 @@ impl Camera {
     pub fn center_around_world_rect(screen: Rect, world_rect_to_fit: Rect) -> Camera {
         let screen_extent = RenderSize::new(screen.w, screen.h.abs());
         let world_extent = RenderSize::new(world_rect_to_fit.w, world_rect_to_fit.h);
-        let pixel_per_world_unit2d = screen_extent.component_div(&world_extent);
+        let pixel_per_world_unit2d = screen_extent.div_element_wise(world_extent);
         let world_rect_center = RenderPoint::new(
             world_rect_to_fit.x + world_rect_to_fit.w * 0.5,
             world_rect_to_fit.y + world_rect_to_fit.h * 0.5,
@@ -47,28 +48,16 @@ impl Camera {
         )
     }
 
-    pub fn transformation_matrix(&self) -> na::Matrix4<f32> {
-        let scaling = na::Vector2::new(self.pixel_per_world_unit, -self.pixel_per_world_unit);
-        let translation = na::Vector2::new(self.screen.x, self.screen.y) + na::Vector2::new(self.screen.w, self.screen.h) * 0.5
-            - self.position.coords.component_mul(&scaling);
+    pub fn transformation_matrix(&self) -> Matrix4<f32> {
+        let scaling = Vector2::new(self.pixel_per_world_unit, -self.pixel_per_world_unit);
+        let translation = Vector2::new(self.screen.x, self.screen.y) + Vector2::new(self.screen.w, self.screen.h) * 0.5
+            - self.position.to_vec().mul_element_wise(scaling);
 
-        na::Matrix4::new(
-            scaling.x,
-            0.0,
-            0.0,
-            translation.x,
-            0.0,
-            scaling.y,
-            0.0,
-            translation.y,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
+        Matrix4::from_cols(
+            Vector4::new(scaling.x, 0.0, 0.0, 0.0),
+            Vector4::new(0.0, scaling.y, 0.0, 0.0),
+            Vector4::new(0.0, 0.0, 0.0, 0.0),
+            Vector4::new(translation.x, translation.y, 0.0, 1.0),
         )
     }
 }
