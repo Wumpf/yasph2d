@@ -5,6 +5,7 @@ use crate::units::{Real, Vector};
 ///
 /// Refer to "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
 /// Kernel not well suited for computing pressure forces since derivative approaches zero.
+#[derive(Copy, Clone)]
 pub struct Poly6 {
     hsq: Real,
     normalizer: Real,

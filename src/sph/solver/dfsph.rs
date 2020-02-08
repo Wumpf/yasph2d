@@ -15,7 +15,7 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     #[allow(dead_code)]
     viscosity_model: TViscosityModel,
 
-    kernel: smoothing_kernel::Poly6,
+    kernel: smoothing_kernel::CubicSpline,
 
     #[allow(dead_code)]
     boundary_mass_factor: Real,
@@ -33,7 +33,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         DFSPHSolver {
             viscosity_model,
 
-            kernel: smoothing_kernel::Poly6::new(smoothing_length),
+            kernel: smoothing_kernel::CubicSpline::new(smoothing_length),
 
             boundary_mass_factor: 1000.0, // pressure & divergence solver will treat boundary particles in interactions like normal particles with this mass factor
 
@@ -45,9 +45,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     // computes alpha factors.
     // Note that in the paper the alpha factors contained density as well (== density / thing-we-compute-here)
+    // (Note that the newer Eurographics SPH Tutorial from 2019 https://interactivecomputergraphics.github.io/SPH-Tutorial/pdf/SPH_Tutorial.pdf actually works with density-squared!)
     // However, all uses of the factor in the paper divide density again, so no need for having it in here in the first place!
     // (seemed to make sense for derivation though :))
-    fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld) {
+    fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld, kernel: impl Kernel + std::marker::Sync) {
         const EPSILON: Real = 0e-6;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
@@ -65,7 +66,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     ri,
                     #[inline(always)]
                     |r_sq, ri_to_rj| {
-                        let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
+                        let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
                         gradient_sum += grad_ij;
                         gradient_square_sum += grad_ij.magnitude2();
                     },
@@ -76,7 +77,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 //     ri,
                 //     #[inline(always)]
                 //     |r_sq, ri_to_rj| {
-                //         let grad_ij = fluid_world.density_kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
+                //         let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
                 //         gradient_sum += grad_ij;
                 //         gradient_square_sum += grad_ij.magnitude2();
                 //     },
@@ -165,7 +166,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     fn correct_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         // todo: proper iteration
         // todo: warmup
-        for _ in 0..8 {
+        for _ in 0..2 {
             self.predict_densities(dt, fluid_world);
             self.update_velocity_prediction(dt, fluid_world);
         }
@@ -182,8 +183,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             self.predicted_densities.resize(fluid_world.particles.positions.len(), Zero::zero());
 
             // todo: Update only new particles
-            fluid_world.update_densities();
-            Self::compute_alpha_factors(&mut self.alpha_values, fluid_world);
+            fluid_world.update_densities(self.kernel);
+            Self::compute_alpha_factors(&mut self.alpha_values, fluid_world, self.kernel);
         }
 
         // compute non-pressure forces (from scratch)
@@ -215,10 +216,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             });
 
         // recompute densities
-        fluid_world.update_densities();
+        fluid_world.update_densities(self.kernel);
 
         // recompute alpha factors
-        Self::compute_alpha_factors(&mut self.alpha_values, fluid_world);
+        Self::compute_alpha_factors(&mut self.alpha_values, fluid_world, self.kernel);
 
         // divergence error loop
         // todo

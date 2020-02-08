@@ -7,6 +7,7 @@ use crate::units::{Real, Vector};
 /// has pretty bad properties in 2D.
 /// Instead, we use a Kernel proposed by Kalle Sjöström in his Master Thesis "Computational Fluid Dynamicsin 2D Game Environments"
 /// (https://pdfs.semanticscholar.org/3e9c/8e0e56d4e50da62f72002a7ad3b51b742327.pdf)
+#[derive(Copy, Clone)]
 pub struct Viscosity {
     h: Real,
     hsq: Real,

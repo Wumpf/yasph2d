@@ -11,13 +11,16 @@ use rayon::prelude::*;
 // https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf
 pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
     viscosity_model: TViscosityModel,
+    density_kernel: smoothing_kernel::Poly6,
     pressure_kernel: smoothing_kernel::Spiky,
     boundary_force_factor: Real,
 }
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
+    #[allow(dead_code)]
     pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> WCSPHSolver<TViscosityModel> {
         WCSPHSolver {
             viscosity_model,
+            density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
             pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
             boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
         }
@@ -116,7 +119,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
             *v += 0.5 * dt * a;
         }
 
-        fluid_world.update_densities();
+        fluid_world.update_densities(self.density_kernel);
         self.update_accellerations(fluid_world, dt);
 
         // part 2 of leap frog integration. Finish updating velocity.

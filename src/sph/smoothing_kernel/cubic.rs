@@ -5,6 +5,7 @@ use crate::units::{Real, Vector};
 ///
 /// Classic cubic spline cernel from "J. Monaghan, Smoothed Particle Hydrodynamics, “Annual Review of Astronomy and Astrophysics”, 30 (1992), pp. 543-574."
 /// Normalization factors from https://pysph.readthedocs.io/en/latest/reference/kernels.html#monaghan1992 via https://github.com/rustsim/salva/blob/master/src/kernel/cubic_spline_kernel.rs
+#[derive(Copy, Clone)]
 pub struct CubicSpline {
     h_inv: Real,
     normalizer: Real,

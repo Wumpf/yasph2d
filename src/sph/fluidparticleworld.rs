@@ -3,7 +3,6 @@ use cgmath::prelude::*;
 use ggez::graphics::Rect;
 use rayon::prelude::*;
 
-use super::smoothing_kernel;
 use super::smoothing_kernel::Kernel;
 
 pub struct Particles {
@@ -64,8 +63,6 @@ pub struct FluidParticleWorld {
     particle_density: Real, // #particles/m² for resting fluid
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
-    pub(super) density_kernel: smoothing_kernel::Poly6,
-
     pub gravity: Vector, // global gravity force in m/s² (== N/kg)
 }
 impl FluidParticleWorld {
@@ -88,8 +85,6 @@ impl FluidParticleWorld {
             smoothing_length,
             particle_density,
             fluid_density,
-
-            density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
 
             gravity: Vector::new(0.0, -9.81),
         }
@@ -166,14 +161,13 @@ impl FluidParticleWorld {
         }
     }
 
-    pub(super) fn update_densities(&mut self) {
+    pub(super) fn update_densities(&mut self, kernel: impl Kernel + std::marker::Sync) {
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.particle_mass();
 
         // Density contributions are symmetric, but that is hard to use in a parallel loop.
         let positions = &self.particles.positions;
-        let kernel = &self.density_kernel;
         let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
         let boundary_particles = &self.particles.boundary_particles;
 

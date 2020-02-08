@@ -5,6 +5,7 @@ use crate::units::{Real, Vector};
 ///
 /// Refer to "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
 /// Kernel well suited for pressure since its gradient doesn't vanish at the center.
+#[derive(Copy, Clone)]
 pub struct Spiky {
     h: Real,
     normalizer: Real,
@@ -12,6 +13,7 @@ pub struct Spiky {
 }
 
 impl Spiky {
+    #[allow(dead_code)]
     pub fn new(smoothing_length: Real) -> Spiky {
         Spiky {
             h: smoothing_length,
