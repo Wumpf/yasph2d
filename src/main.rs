@@ -41,7 +41,7 @@ const SIMULATION_STEP_HISTORY_LENGTH: usize = 20;
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut fluid_world = FluidParticleWorld::new(
-            1.2,    // smoothing factor
+            2.0,    // smoothing factor
             2500.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
@@ -51,11 +51,12 @@ impl MainState {
         fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
 
         let mut xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
-        xsph.epsilon = 0.1;
+        //xsph.epsilon = 0.1;
         let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
-        let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
-        //let sph_solver = DFSPHSolver::new(xsph, fluid_world.smoothing_length());
+
+        //let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
+        let sph_solver = DFSPHSolver::new(xsph, fluid_world.smoothing_length());
 
         let particle_radius = fluid_world.suggested_particle_render_radius();
         let particle_mesh = graphics::Mesh::new_circle(

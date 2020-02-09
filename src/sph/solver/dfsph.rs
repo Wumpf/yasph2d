@@ -142,7 +142,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             let ki = (predicted_densities[i] - reference_density) * alpha_values[i];
 
             // compared to k values in paper already divided with density
-            // collapsing divition of dt² with multiply later -> divide delta with dt.
+            // collapsing divition of dt² with multiply later -> divide delta with dt
 
             Particles::foreach_neighbor_particle(
                 &fluid_world.particles.positions,
@@ -200,30 +200,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             }
         }
-
-
-        
-        // self.predict_densities(dt, fluid_world);
-        // loop {
-        //     self.update_velocity_prediction(dt, fluid_world);
-        //     self.predict_densities(dt, fluid_world);
-        //     num_iter += 1;
-
-        //     let average_density: Real = self.predicted_densities.par_iter().sum::<Real>() / self.predicted_densities.len() as Real;
-        //     assert!(average_density.is_finite());
-        //     let density_error = (average_density - fluid_world.fluid_density()).abs();
-        //     // error is in percent, density error is absolute
-        //     // splishsplash reference impl makes this timestep dependent.
-        //     // This sounds like a great idea which means that we get a "% error per second" as criteria.
-        //     if density_error < 0.0000000001 / dt * fluid_world.fluid_density() {
-        //         println!("density error correction succeeded after {} steps. Density error was {}.", num_iter, density_error);
-        //         break;
-        //     }
-        //     if num_iter > MAX_ITER {
-        //         println!("density error correction failed after {} steps. Density error was {}.", num_iter, density_error);
-        //         break;
-        //     }
-        // }
     }
 }
 
