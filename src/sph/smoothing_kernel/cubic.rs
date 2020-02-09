@@ -4,7 +4,7 @@ use crate::units::{Real, Vector};
 /// Cubic Spline smoothing kernel.
 ///
 /// Classic cubic spline cernel from "J. Monaghan, Smoothed Particle Hydrodynamics, “Annual Review of Astronomy and Astrophysics”, 30 (1992), pp. 543-574."
-/// Normalization factors from https://pysph.readthedocs.io/en/latest/reference/kernels.html#monaghan1992 via https://github.com/rustsim/salva/blob/master/src/kernel/cubic_spline_kernel.rs
+/// Normalization factors from https://pysph.readthedocs.io/en/latest/reference/kernels.html#monaghan1992
 #[derive(Copy, Clone)]
 pub struct CubicSpline {
     h_inv: Real,
@@ -36,10 +36,18 @@ impl Kernel for CubicSpline {
     #[inline]
     fn gradient(&self, ri_to_rj: Vector, _r_sq: Real, r: Real) -> Vector {
         let q = r * self.h_inv;
+
+        // todo?
+        if r < 1.0e-6 {
+            return cgmath::Zero::zero();
+        }
+
+        // todo optimize
         if q <= 0.5 {
-            self.normalizer * (q * q * 3.0 - q * 2.0) * 6.0 / r * ri_to_rj
-        } else if q <= 1.0 {
-            -self.normalizer * (1.0 - q).powi(2) * 6.0 / r * ri_to_rj
+            -self.normalizer * self.h_inv * q * (q * 3.0 - 2.0) * 6.0 / r * ri_to_rj
+        } else if q < 1.0 {
+            let factor = 1.0 - q;
+            self.normalizer * self.h_inv * factor * factor * 6.0 / r * ri_to_rj
         } else {
             cgmath::Zero::zero()
         }
