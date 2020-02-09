@@ -50,7 +50,7 @@ impl MainState {
         fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
         fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
 
-        let mut xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
+        let xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
         //xsph.epsilon = 0.1;
         let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;

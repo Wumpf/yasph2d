@@ -22,7 +22,8 @@ impl Particles {
         for (j, rj) in positions.iter().enumerate() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD { // Skips self and and degenerated overlaps
+            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                // Skips self and and degenerated overlaps
                 continue;
             }
             f(j, r_sq, ri_to_rj);
@@ -39,7 +40,8 @@ impl Particles {
         for rj in positions.iter() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD { // Skips self and and degenerated overlaps
+            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                // Skips self and and degenerated overlaps
                 continue;
             }
             f(r_sq, ri_to_rj);
@@ -50,7 +52,8 @@ impl Particles {
     pub(super) fn foreach_neighbor_particle_compact(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
         for rj in positions.iter() {
             let r_sq = rj.distance2(ri);
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD { // Skips self and and degenerated overlaps
+            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                // Skips self and and degenerated overlaps
                 continue;
             }
             f(r_sq);

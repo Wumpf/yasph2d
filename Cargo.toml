@@ -8,7 +8,7 @@ edition = "2018"
 
 [profile.dev.package."*"]
 opt-level = 3
-overflow-checks = false
+overflow-checks = true
 
 [dependencies]
 ggez = "0.5.1"
