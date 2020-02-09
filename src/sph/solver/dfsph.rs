@@ -70,19 +70,19 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         gradient_square_sum += grad_ij.magnitude2();
                     },
                 );
-                // Particles::foreach_neighbor_particle_noindex(
-                //     &fluid_world.particles.boundary_particles,
-                //     smoothing_length_sq,
-                //     ri,
-                //     #[inline(always)]
-                //     |r_sq, ri_to_rj| {
-                //         let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
-                //         gradient_sum += grad_ij;
-                //         gradient_square_sum += grad_ij.magnitude2();
-                //     },
-                // );
+                Particles::foreach_neighbor_particle_noindex(
+                    &fluid_world.particles.boundary_particles,
+                    smoothing_length_sq,
+                    ri,
+                    #[inline(always)]
+                    |r_sq, ri_to_rj| {
+                        let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * boundary_particle_particle_mass;
+                        gradient_sum += grad_ij;
+                        gradient_square_sum += grad_ij.magnitude2();
+                    },
+                );
 
-                *alpha_value = 1.0 / (gradient_sum.magnitude2() + gradient_square_sum).max(EPSILON);
+                *alpha_value = 1.0 / (gradient_sum.magnitude2() + gradient_square_sum).max(EPSILON); // todo?
             });
     }
 
@@ -135,13 +135,14 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let alpha_values = &self.alpha_values;
         let reference_density = fluid_world.fluid_density();
         let inv_dt = 1.0 / dt;
-        let inv_dt_sq = 1.0 / (dt * dt);
         let kernel = &self.kernel;
-        let viscosity_model = &self.viscosity_model;
 
         self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
             let mut delta: Vector = Zero::zero(); // gradient to self is zero.
-            let ki = (predicted_densities[i] - reference_density) * inv_dt * alpha_values[i];
+            let ki = (predicted_densities[i] - reference_density) * alpha_values[i];
+
+            // compared to k values in paper already divided with density
+            // collapsing divition of dt² with multiply later -> divide delta with dt.
 
             Particles::foreach_neighbor_particle(
                 &fluid_world.particles.positions,
@@ -149,8 +150,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 fluid_world.particles.positions[i],
                 #[inline(always)]
                 |j, r_sq, ri_to_rj| {
-                    let kj = (predicted_densities[j] - reference_density) * inv_dt * alpha_values[j];
-                    // compared to k values in paper already divided with density and multiplied by dt!
+                    let kj = (predicted_densities[j] - reference_density) * alpha_values[j];
                     delta += (ki + kj) * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
                 },
             );
@@ -160,46 +160,12 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 fluid_world.particles.positions[i],
                 #[inline(always)]
                 |r_sq, ri_to_rj| {
-                    // compared to k values in paper already divided with density and multiplied by dt!
-                    delta += inv_dt * ki * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
+                    // compared to k values in paper already divided with density and multiplied with dt²!
+                    delta += ki * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
                 }
             );
 
-            *predicted_velocity -= delta * particle_mass;
-
-            // <EXPERIMENT>
-        //     let rhoi = fluid_world.particles.densities[i];
-        //     let pi = super::WCSPHSolver::<TViscosityModel>::pressure(reference_density, rhoi);
-        //   //  *predicted_velocity = fluid_world.particles.velocities[i];
-        //     Particles::foreach_neighbor_particle(
-        //         &fluid_world.particles.positions,
-        //         smoothing_length,
-        //         fluid_world.particles.positions[i],
-        //         #[inline(always)]
-        //     |j, r_sq, ri_to_rj| {
-        //         let rhoj = fluid_world.particles.densities[j];
-        //         let pj = super::WCSPHSolver::<TViscosityModel>::pressure(reference_density, rhoj);
-        //         let r = r_sq.sqrt();
-
-        //         // accelleration from pressure force
-        //         // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
-        //         // This is a weakly compressible model (WCSPH)
-        //         let pressure_unsmoothed = -particle_mass * (pi + pj) / (2.0 * rhoi * rhoj);
-        //         *predicted_velocity += dt * pressure_unsmoothed * kernel.gradient(ri_to_rj, r_sq, r);
-        //         *predicted_velocity += dt * viscosity_model.compute_viscous_accelleration(dt, r_sq, r_sq.sqrt(), particle_mass, 
-        //                     fluid_world.particles.densities[j], fluid_world.particles.velocities[j] - fluid_world.particles.velocities[i]);
-        //     });
-        //     Particles::foreach_neighbor_particle_noindex(
-        //         &fluid_world.particles.boundary_particles,
-        //         smoothing_length_sq,
-        //         fluid_world.particles.positions[i],
-        //         #[inline(always)]
-        //         |r_sq, ri_to_rj| {
-        //             *predicted_velocity -= dt * 10.0 * kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
-        //         },
-        //     );
-             // </EXPERIMENT>
-
+            *predicted_velocity -= inv_dt * delta * particle_mass;
         });
     }
 
@@ -210,17 +176,21 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let mut num_iter = 0;
         const MAX_ITER: usize = 100;
 
+        self.predict_densities(dt, fluid_world);
         loop {
-            self.predict_densities(dt, fluid_world);
             self.update_velocity_prediction(dt, fluid_world);
-
+            self.predict_densities(dt, fluid_world);
             num_iter += 1;
 
-            if num_iter > 2 {
+            if num_iter != 1 {
                 let average_density: Real = self.predicted_densities.par_iter().sum::<Real>() / self.predicted_densities.len() as Real;
                 assert!(average_density.is_finite());
                 let density_error = (average_density - fluid_world.fluid_density()).abs();
-                if density_error < 0.001 * fluid_world.fluid_density() {
+                // error is in percent, density error is absolute
+                // splishsplash reference impl makes this timestep dependent.
+                // This sounds like a great idea which means that we get a "% error per second" as criteria.
+                if density_error < 0.0000000001 / dt * fluid_world.fluid_density() {
+                    println!("density error correction succeeded after {} steps. Density error was {}.", num_iter, density_error);
                     break;
                 }
                 if num_iter > MAX_ITER {
@@ -230,6 +200,30 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             }
         }
+
+
+        
+        // self.predict_densities(dt, fluid_world);
+        // loop {
+        //     self.update_velocity_prediction(dt, fluid_world);
+        //     self.predict_densities(dt, fluid_world);
+        //     num_iter += 1;
+
+        //     let average_density: Real = self.predicted_densities.par_iter().sum::<Real>() / self.predicted_densities.len() as Real;
+        //     assert!(average_density.is_finite());
+        //     let density_error = (average_density - fluid_world.fluid_density()).abs();
+        //     // error is in percent, density error is absolute
+        //     // splishsplash reference impl makes this timestep dependent.
+        //     // This sounds like a great idea which means that we get a "% error per second" as criteria.
+        //     if density_error < 0.0000000001 / dt * fluid_world.fluid_density() {
+        //         println!("density error correction succeeded after {} steps. Density error was {}.", num_iter, density_error);
+        //         break;
+        //     }
+        //     if num_iter > MAX_ITER {
+        //         println!("density error correction failed after {} steps. Density error was {}.", num_iter, density_error);
+        //         break;
+        //     }
+        // }
     }
 }
 
@@ -248,37 +242,40 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         }
 
         // compute non-pressure forces (from scratch)
-        //let non_pressure_forces: Vector = fluid_world.gravity;
+        let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.particle_mass();
 
         // (optional) adapt timestep using CFL condition
         // todo
 
         // compute velocity prediction (from scratch, can discard forces now!)
-       // let force_to_particle_velocity = dt / fluid_world.particle_mass();
-        self.predicted_velocities
-            .par_iter_mut()
-            .zip(fluid_world.particles.velocities.par_iter())
-            .for_each(|(predicted_velocity, current_velocity)| {
-                *predicted_velocity = /*non_pressure_forces * force_to_particle_velocity*/  fluid_world.gravity * dt + current_velocity;
-            });
+        {
+            let force_to_particle_velocitychange = dt / fluid_world.particle_mass();
+            let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
+            self.predicted_velocities
+                .par_iter_mut()
+                .zip(fluid_world.particles.velocities.par_iter())
+                .for_each(|(predicted_velocity, current_velocity)| {
+                    *predicted_velocity = non_pressure_velocitychange + current_velocity;
+                });
+        }
 
-            // TODO/HACK apply viscosity model
-            // {
-            //     let viscosity_model = &self.viscosity_model;
-            //     let particle_mass = fluid_world.particle_mass();
-            //     self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-            //         Particles::foreach_neighbor_particle(
-            //             &fluid_world.particles.positions,
-            //             fluid_world.smoothing_length(),
-            //             fluid_world.particles.positions[i],
-            //             #[inline(always)]
-            //             |j, r_sq, ri_to_rj| {
-            //                 *predicted_velocity += dt * viscosity_model.compute_viscous_accelleration(dt, r_sq, r_sq.sqrt(), particle_mass, 
-            //                     fluid_world.particles.densities[j], fluid_world.particles.velocities[j] - fluid_world.particles.velocities[i]);
-            //             },
-            //         );
-            //     });
-            // }
+        // TODO/HACK apply viscosity model
+        // {
+        //     let viscosity_model = &self.viscosity_model;
+        //     let particle_mass = fluid_world.particle_mass();
+        //     self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
+        //         Particles::foreach_neighbor_particle(
+        //             &fluid_world.particles.positions,
+        //             fluid_world.smoothing_length(),
+        //             fluid_world.particles.positions[i],
+        //             #[inline(always)]
+        //             |j, r_sq, _ri_to_rj| {
+        //                 *predicted_velocity += dt * viscosity_model.compute_viscous_accelleration(dt, r_sq, r_sq.sqrt(), particle_mass, 
+        //                     fluid_world.particles.densities[j], fluid_world.particles.velocities[j] - fluid_world.particles.velocities[i]);
+        //             },
+        //         );
+        //     });
+        // }
 
 
         // density correction loop
