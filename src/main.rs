@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[macro_use]
+extern crate more_asserts;
+
 use cgmath::prelude::*;
 use ggez::event::{self, EventHandler};
 use ggez::graphics::Rect;

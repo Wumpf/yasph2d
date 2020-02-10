@@ -58,3 +58,5 @@ impl Kernel for CubicSpline {
         unimplemented!();
     }
 }
+
+generate_kernel_tests!(CubicSpline);

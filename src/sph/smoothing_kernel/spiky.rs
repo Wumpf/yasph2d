@@ -27,13 +27,13 @@ impl Spiky {
 impl Kernel for Spiky {
     #[inline]
     fn evaluate(&self, _r_sq: Real, r: Real) -> Real {
-        let hsubr = self.h - r;
+        let hsubr = (self.h - r).max(0.0);
         self.normalizer * hsubr * hsubr * hsubr
     }
 
     #[inline]
     fn gradient(&self, ri_to_rj: Vector, _r_sq: Real, r: Real) -> Vector {
-        let hsubr = self.h - r;
+        let hsubr = (self.h - r).max(0.0);
         (self.normalizer_grad * hsubr * hsubr / (r + Self::DIVISION_EPSILON)) * ri_to_rj
     }
 
@@ -42,3 +42,5 @@ impl Kernel for Spiky {
         unimplemented!();
     }
 }
+
+generate_kernel_tests!(Spiky);

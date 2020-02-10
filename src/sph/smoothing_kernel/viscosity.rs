@@ -29,7 +29,11 @@ impl Viscosity {
 impl Kernel for Viscosity {
     #[inline]
     fn evaluate(&self, r_sq: Real, r: Real) -> Real {
-        self.normalizer * (4.0 * r_sq * r / (9.0 * self.h) + r_sq) / self.hsq
+        if r < self.h {
+            self.normalizer * (4.0 * r_sq * r / (9.0 * self.h) + r_sq) / self.hsq
+        } else {
+            0.0
+        }
     }
 
     #[inline]
@@ -42,3 +46,5 @@ impl Kernel for Viscosity {
         self.normalizer_laplacian * (self.h - r)
     }
 }
+
+generate_kernel_tests!(Viscosity);
