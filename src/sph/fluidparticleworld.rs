@@ -8,7 +8,7 @@ use super::smoothing_kernel::Kernel;
 pub struct Particles {
     pub positions: Vec<Point>,
     pub velocities: Vec<Vector>,
-    pub accellerations: Vec<Vector>,
+    pub accellerations: Vec<Vector>, // TODO move out
     pub densities: Vec<Real>, // Local densities ρ
 
     pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries

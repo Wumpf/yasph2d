@@ -230,35 +230,34 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         // (optional) adapt timestep using CFL condition
         // todo
 
-        // compute velocity prediction (from scratch, can discard forces now!)
+        // compute velocity prediction
         {
-            let force_to_particle_velocitychange = dt / fluid_world.particle_mass();
+            let particle_mass = fluid_world.particle_mass();
+            let viscosity_model = &self.viscosity_model;
+            let force_to_particle_velocitychange = dt / particle_mass;
             let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
             self.predicted_velocities
                 .par_iter_mut()
-                .zip(fluid_world.particles.velocities.par_iter())
-                .for_each(|(predicted_velocity, current_velocity)| {
-                    *predicted_velocity = non_pressure_velocitychange + current_velocity;
+                .enumerate()
+                .for_each(|(i, predicted_velocity)| {
+                    let vi = fluid_world.particles.velocities[i];
+
+                    // forces
+                    *predicted_velocity = non_pressure_velocitychange + vi;
+
+                    // viscosity
+                    Particles::foreach_neighbor_particle(
+                        &fluid_world.particles.positions,
+                        fluid_world.smoothing_length(),
+                        fluid_world.particles.positions[i],
+                        #[inline(always)]
+                        |j, r_sq, _ri_to_rj| {
+                            *predicted_velocity -= dt * viscosity_model.compute_viscous_accelleration(dt, r_sq, r_sq.sqrt(), particle_mass,
+                                fluid_world.particles.densities[j], fluid_world.particles.velocities[j] - vi) * 0.00001;
+                        },
+                    );
                 });
         }
-
-        // TODO/HACK apply viscosity model
-        // {
-        //     let viscosity_model = &self.viscosity_model;
-        //     let particle_mass = fluid_world.particle_mass();
-        //     self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-        //         Particles::foreach_neighbor_particle(
-        //             &fluid_world.particles.positions,
-        //             fluid_world.smoothing_length(),
-        //             fluid_world.particles.positions[i],
-        //             #[inline(always)]
-        //             |j, r_sq, _ri_to_rj| {
-        //                 *predicted_velocity += dt * viscosity_model.compute_viscous_accelleration(dt, r_sq, r_sq.sqrt(), particle_mass,
-        //                     fluid_world.particles.densities[j], fluid_world.particles.velocities[j] - fluid_world.particles.velocities[i]);
-        //             },
-        //         );
-        //     });
-        // }
 
         // density correction loop
         self.correct_density_error(dt, fluid_world);

@@ -31,7 +31,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
         //self.fluid_speedofsound_sq * (local_density - self.fluid_density)
         // Tait equation as in Becker & Teschner 2007 WCSPH07
-        2.0 * ((local_density / fluid_density).powi(7) - 1.0) // 2.0 is a hack
+        100.0 * ((local_density / fluid_density).powi(7) - 1.0) // 2.0 is a hack
     }
 
     fn update_accellerations(&self, fluid_world: &mut FluidParticleWorld, dt: Real) {
