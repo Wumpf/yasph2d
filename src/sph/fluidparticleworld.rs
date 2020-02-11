@@ -8,7 +8,6 @@ use super::smoothing_kernel::Kernel;
 pub struct Particles {
     pub positions: Vec<Point>,
     pub velocities: Vec<Vector>,
-    pub accellerations: Vec<Vector>, // TODO move out
     pub densities: Vec<Real>, // Local densities ρ
 
     pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
@@ -81,7 +80,6 @@ impl FluidParticleWorld {
             particles: Particles {
                 positions: Vec::new(),
                 velocities: Vec::new(),
-                accellerations: Vec::new(),
                 densities: Vec::new(),
 
                 boundary_particles: Vec::new(),
@@ -124,14 +122,12 @@ impl FluidParticleWorld {
         self.particles.positions.clear();
         self.particles.densities.clear();
         self.particles.velocities.clear();
-        self.particles.accellerations.clear();
     }
 
     pub fn remove_all_boundary_particles(&mut self) {
         self.particles.boundary_particles.clear();
         self.particles.densities.clear();
         self.particles.velocities.clear();
-        self.particles.accellerations.clear();
     }
 
     /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
@@ -149,9 +145,6 @@ impl FluidParticleWorld {
         self.particles
             .densities
             .resize(self.particles.densities.len() + num_particles, Zero::zero());
-        self.particles
-            .accellerations
-            .resize(self.particles.accellerations.len() + num_particles, Zero::zero());
 
         let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
         let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));

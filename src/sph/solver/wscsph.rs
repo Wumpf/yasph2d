@@ -14,6 +14,9 @@ pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
     density_kernel: smoothing_kernel::Poly6,
     pressure_kernel: smoothing_kernel::Spiky,
     boundary_force_factor: Real,
+
+    // recomputed every frame, but need previous frame due to leap frog iteration scheme
+    accellerations: Vec<Vector>,
 }
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
     #[allow(dead_code)]
@@ -23,6 +26,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
             pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
             boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
+            accellerations: Vec::new(),
         }
     }
 
@@ -34,41 +38,36 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         100.0 * ((local_density / fluid_density).powi(7) - 1.0) // 2.0 is a hack
     }
 
-    fn update_accellerations(&self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+    fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
         let mass = fluid_world.particle_mass();
 
         // pressure & viscosity forces
         // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
         // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
 
-        // TODO: This is just insane.
-        let positions = &fluid_world.particles.positions;
-        let densities = &fluid_world.particles.densities;
-        let velocities = &fluid_world.particles.velocities;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
-        let boundary_particles = &fluid_world.particles.boundary_particles;
         let fluid_density = fluid_world.fluid_density();
-        let gravity = fluid_world.gravity;
+        let pressure_kernel = self.pressure_kernel;
+        let boundary_force_factor = self.boundary_force_factor;
+        let viscosity_model = &self.viscosity_model;
 
-        fluid_world
-            .particles
-            .accellerations
+        self.accellerations
             .par_iter_mut()
-            .zip(velocities.par_iter())
-            .zip(positions.par_iter().zip(densities.par_iter()))
+            .zip(fluid_world.particles.velocities.par_iter())
+            .zip(fluid_world.particles.positions.par_iter().zip(fluid_world.particles.densities.par_iter()))
             .for_each(|((accelleration, &vi), (&ri, &rhoi))| {
-                *accelleration = gravity;
+                *accelleration = fluid_world.gravity;
 
                 let pi = Self::pressure(fluid_density, rhoi);
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
                 Particles::foreach_neighbor_particle(
-                    positions,
+                    &fluid_world.particles.positions,
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
                     |j, r_sq, ri_to_rj| {
-                        let rhoj = densities[j];
+                        let rhoj = fluid_world.particles.densities[j];
                         let pj = Self::pressure(fluid_density, rhoj);
                         let r = r_sq.sqrt();
 
@@ -76,11 +75,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                         // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                         // This is a weakly compressible model (WCSPH)
                         let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                        *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(ri_to_rj, r_sq, r);
+                        *accelleration += pressure_unsmoothed * pressure_kernel.gradient(ri_to_rj, r_sq, r);
 
-                        *accelleration += self
-                            .viscosity_model
-                            .compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, velocities[j] - vi);
+                        *accelleration +=
+                            viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, fluid_world.particles.velocities[j] - vi);
                     },
                 );
 
@@ -89,12 +87,12 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
                 // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
                 Particles::foreach_neighbor_particle_noindex(
-                    boundary_particles,
+                    &fluid_world.particles.boundary_particles,
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
                     |r_sq, ri_to_rj| {
-                        *accelleration -= self.boundary_force_factor * self.pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
+                        *accelleration -= boundary_force_factor * pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
                     },
                 );
             });
@@ -102,9 +100,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 }
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver<TViscosityModel> {
-    fn clear_cached_data(&mut self) {}
+    fn clear_cached_data(&mut self) {
+        self.accellerations.clear();
+    }
 
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+        self.accellerations.resize(fluid_world.particles.positions.len(), cgmath::Zero::zero());
+
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
         for ((pos, v), a) in fluid_world
@@ -112,7 +114,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
             .positions
             .iter_mut()
             .zip(fluid_world.particles.velocities.iter_mut())
-            .zip(fluid_world.particles.accellerations.iter())
+            .zip(self.accellerations.iter())
         {
             *pos += *v * dt + a * (0.5 * dt * dt);
             // partial update of velocity.
@@ -125,12 +127,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         self.update_accellerations(fluid_world, dt);
 
         // part 2 of leap frog integration. Finish updating velocity.
-        for (v, a) in fluid_world
-            .particles
-            .velocities
-            .iter_mut()
-            .zip(fluid_world.particles.accellerations.iter())
-        {
+        for (v, a) in fluid_world.particles.velocities.iter_mut().zip(self.accellerations.iter()) {
             *v += 0.5 * dt * a;
         }
     }

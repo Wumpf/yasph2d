@@ -172,9 +172,9 @@ impl EventHandler for MainState {
             .particles
             .positions
             .iter()
-            .zip(self.fluid_world.particles.accellerations.iter())
+            .zip(self.fluid_world.particles.velocities.iter())
         {
-            let c = heatmap_color((a.magnitude() * 0.01) as f32);
+            let c = heatmap_color((a.magnitude() * 0.1) as f32);
             let rp: RenderPoint = RenderPoint::new(p.x, p.y);
             graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
         }
