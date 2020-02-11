@@ -211,6 +211,12 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 }
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver<TViscosityModel> {
+    fn clear_cached_data(&mut self) {
+        self.alpha_values.clear();
+        self.predicted_velocities.clear();
+        self.predicted_densities.clear();
+    }
+
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
         // ensure densities and alpha factors were initialized previously ("warmup")
         // Todo: Not happy about the way added particles are handled here. This sort of works for adding, but removing this way is impossible with this design!

@@ -120,6 +120,20 @@ impl FluidParticleWorld {
         Self::particle_radius_from_particle_density(self.particle_density)
     }
 
+    pub fn remove_all_fluid_particles(&mut self) {
+        self.particles.positions.clear();
+        self.particles.densities.clear();
+        self.particles.velocities.clear();
+        self.particles.accellerations.clear();
+    }
+
+    pub fn remove_all_boundary_particles(&mut self) {
+        self.particles.boundary_particles.clear();
+        self.particles.densities.clear();
+        self.particles.velocities.clear();
+        self.particles.accellerations.clear();
+    }
+
     /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
     pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: Real) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis

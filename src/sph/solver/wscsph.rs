@@ -102,6 +102,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 }
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver<TViscosityModel> {
+    fn clear_cached_data(&mut self) {}
+
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration

@@ -3,8 +3,9 @@
 extern crate more_asserts;
 
 use cgmath::prelude::*;
-use ggez::event::{self, EventHandler};
+use ggez::event::{self, EventHandler, KeyCode};
 use ggez::graphics::Rect;
+use ggez::input::keyboard;
 use ggez::{conf, graphics, timer, Context, GameResult};
 
 use std::time::{Duration, Instant};
@@ -49,11 +50,7 @@ impl MainState {
             2500.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
-        fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
-        fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
-
+        Self::reset_fluid(&mut fluid_world);
         let xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
         //xsph.epsilon = 0.1;
         let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.smoothing_length());
@@ -85,6 +82,16 @@ impl MainState {
             simulationstep_count: 0,
         }
     }
+
+    pub fn reset_fluid(fluid_world: &mut FluidParticleWorld) {
+        fluid_world.remove_all_fluid_particles();
+        fluid_world.remove_all_boundary_particles();
+
+        fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
+        fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
+    }
 }
 
 fn clamp(v: f32, min: f32, max: f32) -> f32 {
@@ -115,6 +122,11 @@ const MAX_ALLOWED_SIM_PROCESSING_TIME: Real = 1.0 / 10.0; // if render takes 0 t
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         self.simulationstep_count = 0;
+
+        if keyboard::is_key_pressed(ctx, KeyCode::Space) {
+            self.sph_solver.clear_cached_data(); // todo: this is super meh
+            Self::reset_fluid(&mut self.fluid_world);
+        }
 
         let mut current_time = Instant::now();
         let time_sim_start = current_time;
