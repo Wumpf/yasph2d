@@ -1,7 +1,3 @@
-#[cfg(test)]
-#[macro_use]
-extern crate more_asserts;
-
 use cgmath::prelude::*;
 use ggez::event::{self, EventHandler, KeyCode};
 use ggez::graphics::Rect;
@@ -11,12 +7,10 @@ use ggez::{conf, graphics, timer, Context, GameResult};
 use std::time::{Duration, Instant};
 
 mod camera;
-mod sph;
-mod units;
 
 use camera::*;
-use sph::*;
-use units::*;
+use sphrs2d::sph::*;
+use sphrs2d::units::*;
 
 use std::collections::VecDeque;
 

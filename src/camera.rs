@@ -1,7 +1,9 @@
-use super::units::*;
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Vector2, Vector4};
 use ggez::graphics::Rect;
+
+pub type RenderPoint = cgmath::Point2<f32>;
+pub type RenderSize = cgmath::Vector2<f32>;
 
 // A 2D camera.
 // Maps 2D world coordinates/sizes to screen coordinates/sizes.
