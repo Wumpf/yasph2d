@@ -18,3 +18,8 @@ cgmath = { git = "https://github.com/rustgd/cgmath", rev="50a345b", features=["m
 
 [dev-dependencies]
 more-asserts = "0.2.1"
+criterion = "0.3"
+
+[[bench]]
+name = "smoothing_kernel"
+harness = false

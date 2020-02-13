@@ -3,6 +3,6 @@ pub use self::solver::*;
 pub use self::viscositymodel::*;
 
 mod fluidparticleworld;
-mod smoothing_kernel;
+pub mod smoothing_kernel;
 mod solver;
 mod viscositymodel;
