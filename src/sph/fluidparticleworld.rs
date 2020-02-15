@@ -1,6 +1,7 @@
 use crate::units::*;
 use cgmath::prelude::*;
 use ggez::graphics::Rect;
+use rand::prelude::*;
 use rayon::prelude::*;
 
 use super::smoothing_kernel::Kernel;
@@ -146,12 +147,14 @@ impl FluidParticleWorld {
             .densities
             .resize(self.particles.densities.len() + num_particles, Zero::zero());
 
+        let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(self.particles.positions.len() as u64);
+
         let bottom_left = Point::new(fluid_rect.x as Real, fluid_rect.y as Real);
         let step = (fluid_rect.w as Real / (num_particles_x as Real)).min(fluid_rect.h as Real / (num_particles_y as Real));
         let jitter_factor = step * jitter_amount;
         for y in 0..num_particles_y {
             for x in 0..num_particles_x {
-                let jitter = (rand::random::<Vector>() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
+                let jitter = (rng.gen::<Vector>() * 0.5 + Vector::new(0.5, 0.5)) * jitter_factor;
                 self.particles
                     .positions
                     .push(bottom_left + jitter + Vector::new(step * (x as Real), step * (y as Real)));
