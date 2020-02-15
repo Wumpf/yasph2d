@@ -11,6 +11,10 @@ fn bench_kernels(c: &mut Criterion) {
     let r_sq = black_box(ri_to_rj.magnitude2());
     let r = black_box(r_sq.sqrt());
 
+    // Note:
+    // Tried differing output every iteration using iter_batched, however this has still way too much overhead on the incredibly fast kernel funcs.
+    // It seems Criterion is not really suited to benchmark functions _that_ small.
+
     {
         let kernel = black_box(CubicSpline::new(smoothing_length));
         c.bench_function("CubicSpline.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
@@ -32,7 +36,7 @@ fn config() -> Criterion {
     Criterion::default()
         .warm_up_time(core::time::Duration::new(0, 100))
         .sample_size(1000)
-        .significance_level(0.1)
+        .noise_threshold(0.05)
 }
 
 criterion_group!(
