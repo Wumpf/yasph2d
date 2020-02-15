@@ -4,39 +4,59 @@ use ggez::graphics::Rect;
 use rand::prelude::*;
 use rayon::prelude::*;
 
+use super::neighborhood_search::NeighborhoodSearch;
 use super::smoothing_kernel::Kernel;
 
 pub struct Particles {
     pub positions: Vec<Point>,
     pub velocities: Vec<Vector>,
-    pub densities: Vec<Real>, // Local densities ρ
 
-    pub boundary_particles: Vec<Point>, // also called "shadow particles", immovable particles used for boundaries
+    // Local densities ρ
+    // typically recomputed every frame
+    pub densities: Vec<Real>,
+
+    // also called "shadow particles", immovable particles used for boundaries
+    pub boundary_particles: Vec<Point>,
+
+    pub(super) neighborhood: NeighborhoodSearch,
 }
 
 impl Particles {
     const OVERLAP_THRESHOLD: Real = 0.00001;
 
-    #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
-        for (j, rj) in positions.iter().enumerate() {
+    pub(super) fn foreach_neighbor_particle(neighborhood: &NeighborhoodSearch, positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
+        neighborhood.foreach_potential_neighbor(ri, #[inline(always)] |j| {
+            let rj = positions[j];
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
             if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
                 // Skips self and and degenerated overlaps
-                continue;
+                return;
             }
             f(j, r_sq, ri_to_rj);
-        }
+        });
     }
 
-    #[inline(always)]
     pub(super) fn foreach_neighbor_particle_noindex(
+        neighborhood: &NeighborhoodSearch,
         positions: &[Point],
         smoothing_length_sq: Real,
         ri: Point,
         mut f: impl FnMut(Real, Vector) -> (),
     ) {
+        neighborhood.foreach_potential_neighbor(ri, #[inline(always)] |j| {
+            let rj = positions[j];
+            let ri_to_rj = rj - ri;
+            let r_sq = ri_to_rj.magnitude2();
+            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                // Skips self and and degenerated overlaps
+                return;
+            }
+            f(r_sq, ri_to_rj);
+        });
+    }
+
+    pub(super) fn foreach_neighbor_particle_boundary(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real, Vector) -> ()) {
         for rj in positions.iter() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
@@ -45,19 +65,7 @@ impl Particles {
                 continue;
             }
             f(r_sq, ri_to_rj);
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_compact(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real) -> ()) {
-        for rj in positions.iter() {
-            let r_sq = rj.distance2(ri);
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
-                // Skips self and and degenerated overlaps
-                continue;
-            }
-            f(r_sq);
-        }
+        };
     }
 }
 
@@ -84,6 +92,8 @@ impl FluidParticleWorld {
                 densities: Vec::new(),
 
                 boundary_particles: Vec::new(),
+
+                neighborhood: NeighborhoodSearch::new(smoothing_length),
             },
 
             smoothing_length,
@@ -182,6 +192,7 @@ impl FluidParticleWorld {
         let mass = self.particle_mass();
 
         // Density contributions are symmetric, but that is hard to use in a parallel loop.
+        let neighborhood = &self.particles.neighborhood;
         let positions = &self.particles.positions;
         let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
         let boundary_particles = &self.particles.boundary_particles;
@@ -193,22 +204,23 @@ impl FluidParticleWorld {
             .for_each(|(density, ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
 
-                Particles::foreach_neighbor_particle_compact(
+                Particles::foreach_neighbor_particle_noindex(
+                    neighborhood,
                     positions,
                     smoothing_length_sq,
                     *ri,
                     #[inline(always)]
-                    |r_sq| {
+                    |r_sq, _| {
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },
                 );
-                Particles::foreach_neighbor_particle_compact(
+                Particles::foreach_neighbor_particle_boundary(
                     boundary_particles,
                     smoothing_length_sq,
                     *ri,
                     #[inline(always)]
-                    |r_sq| {
+                    |r_sq, _| {
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },

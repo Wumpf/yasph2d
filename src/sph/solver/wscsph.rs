@@ -62,6 +62,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
                 Particles::foreach_neighbor_particle(
+                    &fluid_world.particles.neighborhood,
                     &fluid_world.particles.positions,
                     smoothing_length_sq,
                     ri,
@@ -86,7 +87,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
                 // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
                 // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
-                Particles::foreach_neighbor_particle_noindex(
+                Particles::foreach_neighbor_particle_boundary(
                     &fluid_world.particles.boundary_particles,
                     smoothing_length_sq,
                     ri,
@@ -123,6 +124,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
             *v += 0.5 * dt * a;
         }
 
+        fluid_world.particles.neighborhood.update(&fluid_world.particles.positions);
         fluid_world.update_densities(self.density_kernel);
         self.update_accellerations(fluid_world, dt);
 

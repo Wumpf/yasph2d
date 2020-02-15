@@ -65,6 +65,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let mut gradient_sum = Vector::zero();
 
                 Particles::foreach_neighbor_particle_noindex(
+                    &fluid_world.particles.neighborhood,
                     &fluid_world.particles.positions,
                     smoothing_length_sq,
                     ri,
@@ -75,7 +76,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         gradient_square_sum += grad_ij.magnitude2();
                     },
                 );
-                Particles::foreach_neighbor_particle_noindex(
+                Particles::foreach_neighbor_particle_boundary(
                     &fluid_world.particles.boundary_particles,
                     smoothing_length_sq,
                     ri,
@@ -107,6 +108,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let mut delta = 0.0; // gradient to self is zero.
 
                 Particles::foreach_neighbor_particle(
+                    &fluid_world.particles.neighborhood,
                     &fluid_world.particles.positions,
                     smoothing_length_sq,
                     ri,
@@ -116,7 +118,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         delta += delta_v.dot(kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
                     },
                 );
-                Particles::foreach_neighbor_particle_noindex(
+                Particles::foreach_neighbor_particle_boundary(
                     &fluid_world.particles.boundary_particles,
                     smoothing_length_sq,
                     ri,
@@ -151,6 +153,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             // collapsing divition of dt² with multiply later -> divide delta with dt
 
             Particles::foreach_neighbor_particle(
+                &fluid_world.particles.neighborhood,
                 &fluid_world.particles.positions,
                 smoothing_length_sq,
                 fluid_world.particles.positions[i],
@@ -160,7 +163,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     delta += (ki + kj) * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
                 },
             );
-            Particles::foreach_neighbor_particle_noindex(
+            Particles::foreach_neighbor_particle_boundary(
                 &fluid_world.particles.boundary_particles,
                 smoothing_length_sq,
                 fluid_world.particles.positions[i],
@@ -226,6 +229,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             self.predicted_densities.resize(fluid_world.particles.positions.len(), Zero::zero());
 
             // todo: Update only new particles
+            fluid_world.particles.neighborhood.update(&fluid_world.particles.positions);
             fluid_world.update_densities(self.kernel);
             Self::compute_alpha_factors(&mut self.alpha_values, fluid_world, self.kernel);
         }
@@ -250,6 +254,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
 
                 // viscosity
                 Particles::foreach_neighbor_particle(
+                    &fluid_world.particles.neighborhood,
                     &fluid_world.particles.positions,
                     fluid_world.smoothing_length(),
                     fluid_world.particles.positions[i],
@@ -281,6 +286,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             .for_each(|(position, predicted_velocity)| {
                 *position += predicted_velocity * dt;
             });
+        fluid_world.particles.neighborhood.update(&fluid_world.particles.positions);
 
         // todo: fuse density & alpha factor computation.
         // recompute densities
