@@ -33,6 +33,8 @@ struct MainState {
     simulation_step_duration_history: VecDeque<Duration>,
     simulation_processing_time: Duration,
     simulationstep_count: u32,
+
+    simulation_time: Duration,
 }
 
 const SIMULATION_STEP_HISTORY_LENGTH: usize = 20;
@@ -74,6 +76,8 @@ impl MainState {
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
             simulation_processing_time: Default::default(),
             simulationstep_count: 0,
+
+            simulation_time: Default::default(),
         }
     }
 
@@ -128,7 +132,12 @@ impl EventHandler for MainState {
         while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
             let time_step_start = current_time;
 
+            // if (self.simulation_time > Duration::from_secs(1)) {
+            //     break;
+            // }
+
             self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
+            self.simulation_time += Duration::from_secs_f64(SIM_TIME_STEP as f64);
             self.simulationstep_count += 1;
 
             if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
@@ -190,12 +199,13 @@ impl EventHandler for MainState {
                 self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
 
             let fps_display = graphics::Text::new(format!(
-                "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms",
+                "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms\nSimTime {:.2}",
                 1000.0 / fps,
                 fps,
                 self.simulation_processing_time.as_secs_f64() * 1000.0,
                 self.simulationstep_count,
                 average_simulation_step_duration.as_secs_f64() * 1000.0,
+                self.simulation_time.as_secs_f64(),
             ));
             graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
 
