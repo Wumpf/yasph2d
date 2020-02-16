@@ -3,12 +3,14 @@ use criterion::{black_box, criterion_group, Criterion};
 use sphrs2d::sph::morton::*;
 
 fn bench_morton(c: &mut Criterion) {
-    let x = 123;
-    let y = 321;
+    let x: u32 = 123;
+    let y: u32 = 321;
 
     let mut group = c.benchmark_group("morton.encode");
-    group.bench_function("encode_bitfiddle", |b| b.iter(|| encode_bitfiddle(black_box(x), black_box(y))));
-    group.bench_function("encode_lookup", |b| b.iter(|| encode_lookup(black_box(x), black_box(y))));
+    group.bench_function("encode_bitfiddle", |b| {
+        b.iter(|| encode_bitfiddle(black_box(x) as u16, black_box(y) as u16))
+    });
+    group.bench_function("encode_lookup", |b| b.iter(|| encode_lookup(black_box(x) as u16, black_box(y) as u16)));
     group.finish();
 }
 

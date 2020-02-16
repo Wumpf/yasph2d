@@ -11,8 +11,14 @@ struct Particle {
 
 #[derive(Copy, Clone)]
 struct CellPos {
-    x: CellIndex,
-    y: CellIndex,
+    x: u16,
+    y: u16,
+}
+impl CellPos {
+    #[inline]
+    fn to_cidx(self) -> CellIndex {
+        super::morton::encode(self.x, self.y)
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -26,25 +32,19 @@ struct GridProperties {
     cell_size_inv: Real,
     grid_min: Point,
 }
-
 impl GridProperties {
     #[inline]
     fn position_to_cellpos(&self, position: Point) -> CellPos {
         let cellspace = (position - self.grid_min) * self.cell_size_inv;
         CellPos {
-            x: cellspace.x as CellIndex,
-            y: cellspace.y as CellIndex,
+            x: cellspace.x as u16,
+            y: cellspace.y as u16,
         }
     }
 
     #[inline]
-    fn cellpos_to_cidx(cellpos: CellPos) -> CellIndex {
-        super::morton::encode(cellpos.x, cellpos.y)
-    }
-
-    #[inline]
     fn position_to_cidx(&self, position: Point) -> CellIndex {
-        Self::cellpos_to_cidx(self.position_to_cellpos(position))
+        self.position_to_cellpos(position).to_cidx()
     }
 }
 

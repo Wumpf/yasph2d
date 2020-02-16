@@ -29,8 +29,8 @@ pub use encode_lookup as encode;
 // via https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
 // Example: input 0b1011_1100_1011_1101, output 0b01000101_01010000_01000101_01010001
 #[inline]
-fn part_1by1(mut x: u32) -> u32 {
-    x &= 0x0000_ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
+fn part_1by1(x: u16) -> u32 {
+    let mut x = x as u32; // x = ---- ---- ---- ---- fedc ba98 7654 3210
     x = (x ^ (x << 8)) & 0x00ff_00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
     x = (x ^ (x << 4)) & 0x0f0f_0f0f; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
     x = (x ^ (x << 2)) & 0x3333_3333; // x = --fe --dc --ba --98 --76 --54 --32 --10
@@ -40,7 +40,7 @@ fn part_1by1(mut x: u32) -> u32 {
 
 // Encodes two 16(!) bit numbers into a single 32bit number by interleaving the bits.
 #[inline]
-pub fn encode_bitfiddle(x: u32, y: u32) -> u32 {
+pub fn encode_bitfiddle(x: u16, y: u16) -> u32 {
     (part_1by1(y) << 1) + part_1by1(x)
 }
 
@@ -50,7 +50,7 @@ pub fn encode_bitfiddle(x: u32, y: u32) -> u32 {
 // via
 // https://graphics.stanford.edu/~seander/bithacks.html#InterleaveTableObvious
 #[inline]
-pub fn encode_lookup(x: u32, y: u32) -> u32 {
+pub fn encode_lookup(x: u16, y: u16) -> u32 {
     const MORTON_TABLE256: [u16; 256] = [
         0x0000, 0x0001, 0x0004, 0x0005, 0x0010, 0x0011, 0x0014, 0x0015, 0x0040, 0x0041, 0x0044, 0x0045, 0x0050, 0x0051, 0x0054, 0x0055, 0x0100,
         0x0101, 0x0104, 0x0105, 0x0110, 0x0111, 0x0114, 0x0115, 0x0140, 0x0141, 0x0144, 0x0145, 0x0150, 0x0151, 0x0154, 0x0155, 0x0400, 0x0401,
@@ -104,7 +104,7 @@ pub(super) fn is_in_rect_presplit(m_cur: u32, min_morton_xbits: u32, min_morton_
 //   then all these bits are replaced in value so if value was 1111_1111_0011_1111, it is now 1111_1111_1001_1111
 fn load_bits(pattern: u32, patternlen: u32, value: u32, dim: u32) -> u32 {
     let wipe_mask = !(part_1by1(0xffff >> (16 - (patternlen / 2 + 1))) << dim); // clears affected bits
-    let pattern = part_1by1(pattern) << dim; // spreads pattern
+    let pattern = part_1by1(pattern as u16) << dim; // spreads pattern
     (value & wipe_mask) | pattern
 }
 
