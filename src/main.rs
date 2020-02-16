@@ -3,7 +3,7 @@ use ggez::event::{self, EventHandler, KeyCode};
 use ggez::graphics::Rect;
 use ggez::input::keyboard;
 use ggez::{conf, graphics, timer, Context, GameResult};
-
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 mod camera;
@@ -11,8 +11,6 @@ mod camera;
 use camera::*;
 use sphrs2d::sph::*;
 use sphrs2d::units::*;
-
-use std::collections::VecDeque;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
@@ -34,10 +32,11 @@ struct MainState {
     simulation_processing_time: Duration,
     simulationstep_count: u32,
 
-    simulation_time: Duration,
+    total_simulation_time: Duration,
+    total_simulation_processing_time: Duration,
 }
 
-const SIMULATION_STEP_HISTORY_LENGTH: usize = 20;
+const SIMULATION_STEP_HISTORY_LENGTH: usize = 80;
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
@@ -77,7 +76,8 @@ impl MainState {
             simulation_processing_time: Default::default(),
             simulationstep_count: 0,
 
-            simulation_time: Default::default(),
+            total_simulation_time: Default::default(),
+            total_simulation_processing_time: Default::default(),
         }
     }
 
@@ -123,6 +123,8 @@ impl EventHandler for MainState {
 
         if keyboard::is_key_pressed(ctx, KeyCode::Space) {
             self.sph_solver.clear_cached_data(); // todo: this is super meh
+            self.total_simulation_time = Default::default();
+            self.total_simulation_processing_time = Default::default();
             Self::reset_fluid(&mut self.fluid_world);
         }
 
@@ -132,20 +134,24 @@ impl EventHandler for MainState {
         while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
             let time_step_start = current_time;
 
-            // if (self.simulation_time > Duration::from_secs(1)) {
-            //     break;
-            // }
+            //if self.total_simulation_time > Duration::from_secs(1) {
+            //    break;
+            //}
 
             self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
-            self.simulation_time += Duration::from_secs_f64(SIM_TIME_STEP as f64);
+            current_time = Instant::now();
+            let step_processing_time = current_time - time_step_start;
+
+            self.simulation_processing_time = current_time - time_sim_start;
+            self.total_simulation_processing_time += step_processing_time;
+            self.total_simulation_time += Duration::from_secs_f64(SIM_TIME_STEP as f64);
             self.simulationstep_count += 1;
 
             if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
                 self.simulation_step_duration_history.pop_front();
             }
-            current_time = Instant::now();
-            self.simulation_step_duration_history.push_back(current_time - time_step_start);
-            self.simulation_processing_time = current_time - time_sim_start;
+
+            self.simulation_step_duration_history.push_back(step_processing_time);
 
             // If we can't process fast enough, consume the remaining residual time.
             // I.e. we give up on getting physics-time on par to real time.
@@ -199,13 +205,14 @@ impl EventHandler for MainState {
                 self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
 
             let fps_display = graphics::Text::new(format!(
-                "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms\nSimTime {:.2}",
+                "{:3.2}ms, FPS: {:3.2}\nSim duration: {:3.2}ms ({:4} steps)| Single Step (averaged): {:.2}ms\nSimTime {:.2}\nSimProcessingTime {:.2}",
                 1000.0 / fps,
                 fps,
                 self.simulation_processing_time.as_secs_f64() * 1000.0,
                 self.simulationstep_count,
                 average_simulation_step_duration.as_secs_f64() * 1000.0,
-                self.simulation_time.as_secs_f64(),
+                self.total_simulation_time.as_secs_f64(),
+                self.total_simulation_processing_time.as_secs_f64(),
             ));
             graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
 
@@ -214,7 +221,7 @@ impl EventHandler for MainState {
                 graphics::draw(
                     ctx,
                     &graphics::Text::new("REALTIME OFF (max sim processing time hit)"),
-                    (RenderPoint::new(10.0, 50.0), graphics::Color::new(1.0, 0.2, 0.2, 1.0)),
+                    (RenderPoint::new(10.0, 70.0), graphics::Color::new(1.0, 0.2, 0.2, 1.0)),
                 )?;
             }
         }
