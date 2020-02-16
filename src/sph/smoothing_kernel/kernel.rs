@@ -24,6 +24,10 @@ pub trait Kernel {
     fn laplacian(&self, r_sq: Real, r: Real) -> Real;
 }
 
+// TODO:
+// * Try WendlandQuintic: https://pysph.readthedocs.io/en/latest/reference/kernels.html#pysph.base.kernels.WendlandQuintic
+// * consider removing laplacian alltogether
+
 macro_rules! generate_kernel_tests {
     ($kernel_type:ident) => {
         #[cfg(test)]

@@ -28,7 +28,7 @@ impl Kernel for CubicSpline {
         let q = r * self.h_inv;
         if q <= 0.5 {
             let q_sq = q * q;
-            self.normalizer * ((1.0/6.0) + q_sq * q - q_sq)
+            self.normalizer * ((1.0 / 6.0) + q_sq * q - q_sq)
         } else if q <= 1.0 {
             let one_minus_q = 1.0 - q;
             self.normalizer * one_minus_q * one_minus_q * one_minus_q * (2.0 / 6.0)

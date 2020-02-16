@@ -1,5 +1,4 @@
 use super::super::fluidparticleworld::FluidParticleWorld;
-use super::super::fluidparticleworld::Particles;
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;

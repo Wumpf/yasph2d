@@ -69,7 +69,7 @@ impl Particles {
                 let rj = positions[j as usize];
                 let ri_to_rj = rj - ri;
                 let r_sq = ri_to_rj.magnitude2();
-                if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                if r_sq > smoothing_length_sq {
                     // Skips self and and degenerated overlaps
                     return;
                 }
