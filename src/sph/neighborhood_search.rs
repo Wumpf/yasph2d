@@ -10,6 +10,12 @@ struct Particle {
 }
 
 #[derive(Copy, Clone)]
+struct CellPos {
+    x: CellIndex,
+    y: CellIndex,
+}
+
+#[derive(Copy, Clone)]
 struct Cell {
     first_particle: ParticleIndex,
     cidx: CellIndex,
@@ -46,16 +52,23 @@ impl NeighborhoodSearch {
         }
     }
 
-    #[inline(always)]
-    fn position_to_cell(grid_min: Point, cell_size_inv: Real, position: Point) -> (CellIndex, CellIndex) {
+    #[inline]
+    fn position_to_cellpos(grid_min: Point, cell_size_inv: Real, position: Point) -> CellPos {
         let cellspace = (position - grid_min) * cell_size_inv;
-        (cellspace.x as CellIndex, cellspace.y as CellIndex)
+        CellPos {
+            x: cellspace.x as CellIndex,
+            y: cellspace.y as CellIndex,
+        }
     }
 
-    #[inline(always)]
+    #[inline]
+    fn cellpos_to_cidx(cellpos: CellPos) -> CellIndex {
+        super::morton::encode(cellpos.x, cellpos.y)
+    }
+
+    #[inline]
     fn position_to_cidx(grid_min: Point, cell_size_inv: Real, position: Point) -> CellIndex {
-        let cell = Self::position_to_cell(grid_min, cell_size_inv, position);
-        super::morton::encode(cell.0, cell.1)
+        Self::cellpos_to_cidx(Self::position_to_cellpos(grid_min, cell_size_inv, position))
     }
 
     pub fn update(&mut self, positions: &[Point]) {
@@ -98,6 +111,7 @@ impl NeighborhoodSearch {
         }); // sentinel cell
     }
 
+    // finds cell array index first cell that has an equal or bigger for a given CellIndex
     fn search_cell(cells: &[Cell], cidx: CellIndex) -> usize {
         let mut min = 0;
         let mut max = cells.len();
@@ -126,19 +140,44 @@ impl NeighborhoodSearch {
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(usize) -> ()) {
-        let cidx_min = Self::position_to_cidx(self.grid_min, self.cell_size_inv, position - Vector::new(self.radius, self.radius));
-        let cidx_max = Self::position_to_cidx(self.grid_min, self.cell_size_inv, position + Vector::new(self.radius, self.radius));
+        const XBITS: u32 = 0b01010101_01010101_01010101_01010101;
+        const YBITS: u32 = 0b10101010_10101010_10101010_10101010;
+
+        let cellpos_min = Self::position_to_cellpos(self.grid_min, self.cell_size_inv, position - Vector::new(self.radius, self.radius));
+        let cidx_min_xbits = super::morton::part_1by1(cellpos_min.x);
+        let cidx_min_ybits = super::morton::part_1by1(cellpos_min.y) << 1;
+        let cidx_min = cidx_min_xbits | cidx_min_ybits;
+
+        let cellpos_max = Self::position_to_cellpos(self.grid_min, self.cell_size_inv, position + Vector::new(self.radius, self.radius));
+        let cidx_max_xbits = super::morton::part_1by1(cellpos_max.x);
+        let cidx_max_ybits = super::morton::part_1by1(cellpos_max.y) << 1;
+        let cidx_max = cidx_max_xbits | cidx_max_ybits;
 
         // todo use
-        // LITMAX/BIGMIN algorithm
-        // http://hermanntropf.de/media/multidimensionalrangequery.pdf
+        //const MAX_CONSECUTIVE_MISSES: u32 = 3;
 
         let first_cell = Self::search_cell(&self.cells, cidx_min);
+        let mut num_misses = 0;
+        let mut expected_next = 0;
         for i in first_cell..(self.cells.len() - 1) {
             let cell = self.cells[i];
             if cell.cidx > cidx_max {
                 break;
             }
+
+            let cidx_xbits = cell.cidx & XBITS;
+            let cidx_ybits = cell.cidx & YBITS;
+
+            if cidx_xbits < cidx_min_xbits || cidx_xbits > cidx_max_xbits || cidx_ybits < cidx_min_ybits || cidx_ybits > cidx_max_ybits {
+                assert!(expected_next <= super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max));
+                num_misses += 1;
+                expected_next = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
+                continue;
+            }
+
+            assert!(num_misses == 0 || cell.cidx >= expected_next);
+            num_misses = 0;
+
             for p in cell.first_particle..self.cells[i + 1].first_particle {
                 f(self.particles[p as usize].pidx as usize); // todo this integer casting thing is getting out of hand
             }

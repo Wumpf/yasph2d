@@ -1,6 +1,7 @@
 // via https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
 
 // "Insert" a 0 bit after each of the 16 low bits of x
+// Example: input 0b1011_1100_1011_1101, output 0b01000101_01010000_01000101_01010001
 pub(super) fn part_1by1(mut x: u32) -> u32 {
     x &= 0x0000_ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
     x = (x ^ (x << 8)) & 0x00ff_00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
@@ -13,6 +14,55 @@ pub(super) fn part_1by1(mut x: u32) -> u32 {
 // encodes two 16(!) bit numbers into a single 32bit number by interleaving the bits.
 pub(super) fn encode(x: u32, y: u32) -> u32 {
     (part_1by1(y) << 1) + part_1by1(x)
+}
+
+// loads a bit pattern for a given dimension.
+// Width of applied bit pattern is patternlen
+// Example:
+//   bit pattern 1011 (patternlen==8) for dim=1=y is first spread out 1x0x_1x1x
+//   then all these bits are replaced in value so if value was 1111_1111_0011_1111, it is now 1111_1111_1001_1111
+fn load_bits(pattern: u32, patternlen: u32, value: u32, dim: u32) -> u32 {
+    // dim = 0 for x; dim = 1 for y
+    let wipe_mask = !(super::morton::part_1by1(0xffff >> (16 - (patternlen / 2 + 1))) << dim); // clears affected bits
+    let pattern = super::morton::part_1by1(pattern) << dim; // spreads pattern
+    (value & wipe_mask) | pattern
+}
+
+// For a given morton index and a bounding rectangle in morton indices,
+// finds the next index that is in the bounding rectangle.
+//
+// See decision table at the end of http://hermanntropf.de/media/multidimensionalrangequery.pdf
+// This was tricky. Some more resources LITMAX/BIGMIN algorithm
+// http://hermanntropf.de/media/multidimensionalrangequery.pdf
+// https://web.archive.org/web/20180311015006/https://docs.raima.com/rdme/9_1/Content/GS/POIexample.htm
+// https://stackoverflow.com/questions/30170783/how-to-use-morton-orderz-order-curve-in-range-search
+pub(super) fn find_bigmin(m_cur: u32, m_min: u32, m_max: u32) -> u32 {
+    let mut m_min = m_min;
+    let mut m_max = m_max;
+    let mut bigmin = 0;
+    for bitpos in (0..32_u32).rev() {
+        let setbit = 1 << bitpos;
+        let minbit = m_min & setbit;
+        let maxbit = m_max & setbit;
+        let curbit = m_cur & setbit;
+        let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
+        let mask = 1 << (bitpos / 2);
+        if curbit == 0 && minbit == 0 && maxbit > 0 {
+            bigmin = load_bits(mask, bitpos, m_min, dim);
+            m_max = load_bits(mask - 1, bitpos, m_max, dim);
+        } else if curbit == 0 && minbit > 0 && maxbit == 0 {
+            unreachable!();
+        } else if curbit == 0 && minbit > 0 && maxbit > 0 {
+            return m_min;
+        } else if curbit > 0 && minbit == 0 && maxbit == 0 {
+            return bigmin;
+        } else if curbit > 0 && minbit == 0 && maxbit > 0 {
+            m_min = load_bits(mask, bitpos, m_min, dim);
+        } else if curbit > 0 && minbit > 0 && maxbit == 0 {
+            unreachable!();
+        }
+    }
+    bigmin
 }
 
 // Don't know if this is one faster. Need to benchmark. Might be also case dependent
