@@ -64,29 +64,24 @@ pub(super) fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
     let mut bigmin = 0;
     for bitpos in (0..32_u32).rev() {
         let setbit = 1 << bitpos;
+        let curbit = (m_cur & setbit) != 0;
         let minbit = (min_morton & setbit) != 0;
         let maxbit = (max_morton & setbit) != 0;
-        let curbit = (m_cur & setbit) != 0;
         let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
         let mask = 1 << (bitpos / 2);
 
-        if curbit {
-            if !minbit && !maxbit {
-                return bigmin;
-            } else if !minbit && maxbit {
-                min_morton = load_bits(mask, bitpos, min_morton, dim);
-            } else if minbit && !maxbit {
-                unreachable!();
-            }
-        } else {
-            if !minbit && maxbit {
+        match (curbit, minbit, maxbit) {
+            (false, false, false) => (),
+            (false, false, true) => {
                 bigmin = load_bits(mask, bitpos, min_morton, dim);
                 max_morton = load_bits(mask - 1, bitpos, max_morton, dim);
-            } else if minbit && !maxbit {
-                unreachable!();
-            } else if minbit && maxbit {
-                return min_morton;
             }
+            (false, true, false) => unreachable!(),
+            (false, true, true) => return min_morton,
+            (true, false, false) => return bigmin,
+            (true, false, true) => min_morton = load_bits(mask, bitpos, min_morton, dim),
+            (true, true, false) => unreachable!(),
+            (true, true, true) => (),
         }
     }
     bigmin
