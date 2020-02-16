@@ -123,17 +123,14 @@ impl PointSet {
     }
 
     pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
-        let cellpos_min = grid.position_to_cellpos(position - Vector::new(grid.radius, grid.radius));
-        let cidx_min_xbits = super::morton::part_1by1(cellpos_min.x);
-        let cidx_min_ybits = super::morton::part_1by1(cellpos_min.y) << 1;
-        let cidx_min = cidx_min_xbits | cidx_min_ybits;
+        let cidx_min = grid.position_to_cidx(position - Vector::new(grid.radius, grid.radius));
+        let cidx_min_xbits = cidx_min & super::morton::MORTON_XBITS;
+        let cidx_min_ybits = cidx_min & super::morton::MORTON_YBITS;
+        let cidx_max = grid.position_to_cidx(position + Vector::new(grid.radius, grid.radius));
+        let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
+        let cidx_max_ybits = cidx_max & super::morton::MORTON_YBITS;
 
-        let cellpos_max = grid.position_to_cellpos(position + Vector::new(grid.radius, grid.radius));
-        let cidx_max_xbits = super::morton::part_1by1(cellpos_max.x);
-        let cidx_max_ybits = super::morton::part_1by1(cellpos_max.y) << 1;
-        let cidx_max = cidx_max_xbits | cidx_max_ybits;
-
-        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
+        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 0;
 
         // Note: Already tried doing this with iterators. it's hard to do and slow!
         let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);

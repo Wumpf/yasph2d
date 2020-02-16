@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, Criterion};
 
 use cgmath::prelude::*;
 use sphrs2d::sph::smoothing_kernel::*;
@@ -44,4 +44,3 @@ criterion_group!(
     config = config();
     targets = bench_kernels
 );
-criterion_main!(smoothing_kernel);

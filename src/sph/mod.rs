@@ -3,7 +3,7 @@ pub use self::solver::*;
 pub use self::viscositymodel::*;
 
 mod fluidparticleworld;
-mod morton;
+pub mod morton;
 mod neighborhood_search;
 pub mod smoothing_kernel;
 mod solver;
