@@ -1,5 +1,8 @@
 // via https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
 
+const MORTON_XBITS: u32 = 0b01010101_01010101_01010101_01010101;
+const MORTON_YBITS: u32 = 0b10101010_10101010_10101010_10101010;
+
 // "Insert" a 0 bit after each of the 16 low bits of x
 // Example: input 0b1011_1100_1011_1101, output 0b01000101_01010000_01000101_01010001
 pub(super) fn part_1by1(mut x: u32) -> u32 {
@@ -14,6 +17,24 @@ pub(super) fn part_1by1(mut x: u32) -> u32 {
 // encodes two 16(!) bit numbers into a single 32bit number by interleaving the bits.
 pub(super) fn encode(x: u32, y: u32) -> u32 {
     (part_1by1(y) << 1) + part_1by1(x)
+}
+
+// determines if a given morton code is within a rectangle given by morton codes\
+#[allow(dead_code)]
+pub(super) fn is_in_rect(m_cur: u32, min_morton: u32, max_morton: u32) -> bool {
+    let max_morton_xbits = max_morton & MORTON_XBITS;
+    let max_morton_ybits = max_morton & MORTON_YBITS;
+    let min_morton_xbits = min_morton & MORTON_XBITS;
+    let min_morton_ybits = min_morton & MORTON_YBITS;
+    is_in_rect_presplit(m_cur, min_morton_xbits, min_morton_ybits, max_morton_xbits, max_morton_ybits)
+}
+
+// determines if a given morton code is within a rectangle given by pre-split morton codes
+pub(super) fn is_in_rect_presplit(m_cur: u32, min_morton_xbits: u32, min_morton_ybits: u32, max_morton_xbits: u32, max_morton_ybits: u32) -> bool {
+    let cur_x = m_cur & MORTON_XBITS;
+    let cur_y = m_cur & MORTON_YBITS;
+
+    cur_x >= min_morton_xbits && cur_y >= min_morton_ybits && cur_x <= max_morton_xbits && cur_y <= max_morton_ybits
 }
 
 // loads a bit pattern for a given dimension.
@@ -37,14 +58,14 @@ fn load_bits(pattern: u32, patternlen: u32, value: u32, dim: u32) -> u32 {
 // http://hermanntropf.de/media/multidimensionalrangequery.pdf
 // https://web.archive.org/web/20180311015006/https://docs.raima.com/rdme/9_1/Content/GS/POIexample.htm
 // https://stackoverflow.com/questions/30170783/how-to-use-morton-orderz-order-curve-in-range-search
-pub(super) fn find_bigmin(m_cur: u32, m_min: u32, m_max: u32) -> u32 {
-    let mut m_min = m_min;
-    let mut m_max = m_max;
+pub(super) fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
+    let mut min_morton = min_morton;
+    let mut max_morton = max_morton;
     let mut bigmin = 0;
     for bitpos in (0..32_u32).rev() {
         let setbit = 1 << bitpos;
-        let minbit = (m_min & setbit) != 0;
-        let maxbit = (m_max & setbit) != 0;
+        let minbit = (min_morton & setbit) != 0;
+        let maxbit = (max_morton & setbit) != 0;
         let curbit = (m_cur & setbit) != 0;
         let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
         let mask = 1 << (bitpos / 2);
@@ -53,18 +74,18 @@ pub(super) fn find_bigmin(m_cur: u32, m_min: u32, m_max: u32) -> u32 {
             if !minbit && !maxbit {
                 return bigmin;
             } else if !minbit && maxbit {
-                m_min = load_bits(mask, bitpos, m_min, dim);
+                min_morton = load_bits(mask, bitpos, min_morton, dim);
             } else if minbit && !maxbit {
                 unreachable!();
             }
         } else {
             if !minbit && maxbit {
-                bigmin = load_bits(mask, bitpos, m_min, dim);
-                m_max = load_bits(mask - 1, bitpos, m_max, dim);
+                bigmin = load_bits(mask, bitpos, min_morton, dim);
+                max_morton = load_bits(mask - 1, bitpos, max_morton, dim);
             } else if minbit && !maxbit {
                 unreachable!();
             } else if minbit && maxbit {
-                return m_min;
+                return min_morton;
             }
         }
     }

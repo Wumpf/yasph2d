@@ -140,9 +140,6 @@ impl NeighborhoodSearch {
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(usize) -> ()) {
-        const XBITS: u32 = 0b01010101_01010101_01010101_01010101;
-        const YBITS: u32 = 0b10101010_10101010_10101010_10101010;
-
         let cellpos_min = Self::position_to_cellpos(self.grid_min, self.cell_size_inv, position - Vector::new(self.radius, self.radius));
         let cidx_min_xbits = super::morton::part_1by1(cellpos_min.x);
         let cidx_min_ybits = super::morton::part_1by1(cellpos_min.y) << 1;
@@ -165,10 +162,7 @@ impl NeighborhoodSearch {
                 break;
             }
 
-            let cidx_xbits = cell.cidx & XBITS;
-            let cidx_ybits = cell.cidx & YBITS;
-
-            if cidx_xbits < cidx_min_xbits || cidx_xbits > cidx_max_xbits || cidx_ybits < cidx_min_ybits || cidx_ybits > cidx_max_ybits {
+            if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
                 assert!(expected_next <= super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max));
                 num_misses += 1;
                 expected_next = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
