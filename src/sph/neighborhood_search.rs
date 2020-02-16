@@ -98,41 +98,6 @@ impl PointSet {
             cidx: CellIndex::max_value(),
         }); // sentinel cell
     }
-}
-
-pub struct NeighborhoodSearch {
-    grid: GridProperties,
-
-    dynamic_particles: PointSet,
-    //static_boundary: PointSet,
-}
-
-impl NeighborhoodSearch {
-    /// * radius:               Radius that determines if a point is a neighbor
-    /// * expected_max_density: Num particles expected per square unit
-    pub fn new(radius: Real, //    , expected_max_density: Real
-    ) -> NeighborhoodSearch {
-        let cell_size = radius * 2.0; // todo: experiment with larger cells
-
-        //const INDICES_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
-        //let mut num_expected_in_cell = (cell_size * cell_size * expected_max_density + 0.5) as u32;
-        //num_expected_in_cell = (num_expected_in_cell + INDICES_PER_CACHELINE-1) / INDICES_PER_CACHELINE * INDICES_PER_CACHELINE;
-
-        NeighborhoodSearch {
-            grid: GridProperties {
-                radius,
-                cell_size_inv: 1.0 / cell_size,
-                // todo: we can create a huge domain, but still there is a limited domain! should be safe about this and have a max
-                // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
-                grid_min: Point::new(-100.0, -100.0),
-            },
-            dynamic_particles: Default::default(),
-        }
-    }
-
-    pub fn update(&mut self, positions: &[Point]) {
-        self.dynamic_particles.update(&self.grid, positions);
-    }
 
     // finds cell array index first cell that has an equal or bigger for a given CellIndex
     fn find_next_cell(cells: &[Cell], cidx: CellIndex) -> usize {
@@ -157,13 +122,13 @@ impl NeighborhoodSearch {
         max
     }
 
-    pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
-        let cellpos_min = self.grid.position_to_cellpos(position - Vector::new(self.grid.radius, self.grid.radius));
+    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
+        let cellpos_min = grid.position_to_cellpos(position - Vector::new(grid.radius, grid.radius));
         let cidx_min_xbits = super::morton::part_1by1(cellpos_min.x);
         let cidx_min_ybits = super::morton::part_1by1(cellpos_min.y) << 1;
         let cidx_min = cidx_min_xbits | cidx_min_ybits;
 
-        let cellpos_max = self.grid.position_to_cellpos(position + Vector::new(self.grid.radius, self.grid.radius));
+        let cellpos_max = grid.position_to_cellpos(position + Vector::new(grid.radius, grid.radius));
         let cidx_max_xbits = super::morton::part_1by1(cellpos_max.x);
         let cidx_max_ybits = super::morton::part_1by1(cellpos_max.y) << 1;
         let cidx_max = cidx_max_xbits | cidx_max_ybits;
@@ -171,8 +136,8 @@ impl NeighborhoodSearch {
         const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
 
         // Note: Already tried doing this with iterators. it's hard to do and slow!
-        let mut cell_arrayidx = Self::find_next_cell(&self.dynamic_particles.cells, cidx_min);
-        let mut cell = self.dynamic_particles.cells[cell_arrayidx];
+        let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
+        let mut cell = self.cells[cell_arrayidx];
 
         while cell.cidx <= cidx_max {
             // skip until cell is in rect
@@ -183,12 +148,12 @@ impl NeighborhoodSearch {
                 // Try next. Prefer to just grind the array, but at some point use bigmin to jump ahead.
                 if num_misses > MAX_CONSECUTIVE_CELL_MISSES {
                     let expected_next_cidx = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
-                    cell_arrayidx += Self::find_next_cell(&self.dynamic_particles.cells[cell_arrayidx..], expected_next_cidx);
+                    cell_arrayidx += Self::find_next_cell(&self.cells[cell_arrayidx..], expected_next_cidx);
                     assert!(expected_next_cidx > cell.cidx);
                 } else {
                     cell_arrayidx += 1;
                 }
-                cell = self.dynamic_particles.cells[cell_arrayidx];
+                cell = self.cells[cell_arrayidx];
 
                 if cell.cidx > cidx_max {
                     return;
@@ -199,7 +164,7 @@ impl NeighborhoodSearch {
             let first_particle = cell.first_particle;
             loop {
                 cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
-                cell = self.dynamic_particles.cells[cell_arrayidx];
+                cell = self.cells[cell_arrayidx];
                 if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
                     break;
                 }
@@ -209,15 +174,63 @@ impl NeighborhoodSearch {
 
             // Consume particles.
             for p in first_particle..last_particle {
-                f(self.dynamic_particles.particles[p as usize].pidx);
+                f(self.particles[p as usize].pidx);
             }
 
             // We know current cell isn't in the rect, so skip it.
             cell_arrayidx += 1;
-            if cell_arrayidx >= self.dynamic_particles.cells.len() {
+            if cell_arrayidx >= self.cells.len() {
                 break;
             }
-            cell = self.dynamic_particles.cells[cell_arrayidx];
+            cell = self.cells[cell_arrayidx];
         }
+    }
+}
+
+pub struct NeighborhoodSearch {
+    grid: GridProperties,
+
+    dynamic_particles: PointSet,
+    boundary_particles: PointSet,
+}
+
+impl NeighborhoodSearch {
+    /// * radius:               Radius that determines if a point is a neighbor
+    /// * expected_max_density: Num particles expected per square unit
+    pub fn new(radius: Real, //    , expected_max_density: Real
+    ) -> NeighborhoodSearch {
+        let cell_size = radius * 2.0; // todo: experiment with larger cells
+
+        //const INDICES_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
+        //let mut num_expected_in_cell = (cell_size * cell_size * expected_max_density + 0.5) as u32;
+        //num_expected_in_cell = (num_expected_in_cell + INDICES_PER_CACHELINE-1) / INDICES_PER_CACHELINE * INDICES_PER_CACHELINE;
+
+        NeighborhoodSearch {
+            grid: GridProperties {
+                radius,
+                cell_size_inv: 1.0 / cell_size,
+                // todo: we can create a huge domain, but still there is a limited domain! should be safe about this and have a max
+                // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
+                grid_min: Point::new(-100.0, -100.0),
+            },
+            dynamic_particles: Default::default(),
+            boundary_particles: Default::default(),
+        }
+    }
+
+    pub fn update_boundary(&mut self, positions: &[Point]) {
+        self.boundary_particles.update(&self.grid, positions);
+    }
+
+    pub fn update(&mut self, positions: &[Point]) {
+        self.dynamic_particles.update(&self.grid, positions);
+    }
+
+    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(ParticleIndex) -> ()) {
+        self.dynamic_particles.foreach_potential_neighbor(&self.grid, position, f)
+    }
+
+    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(ParticleIndex) -> ()) {
+        self.boundary_particles.foreach_potential_neighbor(&self.grid, position, f)
     }
 }

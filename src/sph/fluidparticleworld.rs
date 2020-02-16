@@ -18,13 +18,17 @@ pub struct Particles {
     // also called "shadow particles", immovable particles used for boundaries
     pub boundary_particles: Vec<Point>,
 
-    pub(super) neighborhood: NeighborhoodSearch,
+    neighborhood: NeighborhoodSearch,
 }
 
 impl Particles {
     const OVERLAP_THRESHOLD: Real = 0.00001;
 
-    pub(super) fn foreach_neighbor_particle(
+    pub(super) fn foreach_neighbor_particle(&self, smoothing_length_sq: Real, ri: Point, f: impl FnMut(usize, Real, Vector) -> ()) {
+        Self::foreach_neighbor_particle_internal(&self.neighborhood, &self.positions, smoothing_length_sq, ri, f)
+    }
+
+    fn foreach_neighbor_particle_internal(
         neighborhood: &NeighborhoodSearch,
         positions: &[Point],
         smoothing_length_sq: Real,
@@ -33,7 +37,7 @@ impl Particles {
     ) {
         neighborhood.foreach_potential_neighbor(
             ri,
-            #[inline(always)]
+            #[inline]
             |j| {
                 let rj = positions[j as usize];
                 let ri_to_rj = rj - ri;
@@ -47,16 +51,20 @@ impl Particles {
         );
     }
 
-    pub(super) fn foreach_neighbor_particle_noindex(
+    pub(super) fn foreach_neighbor_particle_boundary(&self, smoothing_length_sq: Real, ri: Point, f: impl FnMut(Real, Vector) -> ()) {
+        Self::foreach_neighbor_particle_boundary_internal(&self.neighborhood, &self.boundary_particles, smoothing_length_sq, ri, f)
+    }
+
+    fn foreach_neighbor_particle_boundary_internal(
         neighborhood: &NeighborhoodSearch,
         positions: &[Point],
         smoothing_length_sq: Real,
         ri: Point,
         mut f: impl FnMut(Real, Vector) -> (),
     ) {
-        neighborhood.foreach_potential_neighbor(
+        neighborhood.foreach_potential_boundary_neighbor(
             ri,
-            #[inline(always)]
+            #[inline]
             |j| {
                 let rj = positions[j as usize];
                 let ri_to_rj = rj - ri;
@@ -69,23 +77,6 @@ impl Particles {
             },
         );
     }
-
-    pub(super) fn foreach_neighbor_particle_boundary(
-        positions: &[Point],
-        smoothing_length_sq: Real,
-        ri: Point,
-        mut f: impl FnMut(Real, Vector) -> (),
-    ) {
-        for rj in positions.iter() {
-            let ri_to_rj = rj - ri;
-            let r_sq = ri_to_rj.magnitude2();
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
-                // Skips self and and degenerated overlaps
-                continue;
-            }
-            f(r_sq, ri_to_rj);
-        }
-    }
 }
 
 pub struct FluidParticleWorld {
@@ -96,6 +87,8 @@ pub struct FluidParticleWorld {
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
 
     pub gravity: Vector, // global gravity force in m/s² (== N/kg)
+
+    boundary_changed: bool,
 }
 impl FluidParticleWorld {
     pub fn new(
@@ -120,6 +113,8 @@ impl FluidParticleWorld {
             fluid_density,
 
             gravity: Vector::new(0.0, -9.81),
+
+            boundary_changed: true,
         }
     }
 
@@ -203,6 +198,8 @@ impl FluidParticleWorld {
             self.particles.boundary_particles.push(pos);
             pos += step;
         }
+
+        self.boundary_changed = true;
     }
 
     pub(super) fn update_densities(&mut self, kernel: impl Kernel + std::marker::Sync) {
@@ -212,9 +209,9 @@ impl FluidParticleWorld {
 
         // Density contributions are symmetric, but that is hard to use in a parallel loop.
         let neighborhood = &self.particles.neighborhood;
-        let positions = &self.particles.positions;
         let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
         let boundary_particles = &self.particles.boundary_particles;
+        let positions = &self.particles.positions;
 
         self.particles
             .densities
@@ -223,19 +220,20 @@ impl FluidParticleWorld {
             .for_each(|(density, ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
 
-                Particles::foreach_neighbor_particle_noindex(
-                    neighborhood,
-                    positions,
+                Particles::foreach_neighbor_particle_internal(
+                    &neighborhood,
+                    &positions,
                     smoothing_length_sq,
                     *ri,
                     #[inline(always)]
-                    |r_sq, _| {
+                    |_, r_sq, _| {
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },
                 );
-                Particles::foreach_neighbor_particle_boundary(
-                    boundary_particles,
+                Particles::foreach_neighbor_particle_boundary_internal(
+                    &neighborhood,
+                    &boundary_particles,
                     smoothing_length_sq,
                     *ri,
                     #[inline(always)]
@@ -245,5 +243,14 @@ impl FluidParticleWorld {
                     },
                 );
             });
+    }
+
+    pub(super) fn update_neighborhood_datastructure(&mut self) {
+        self.particles.neighborhood.update(&self.particles.positions);
+
+        if self.boundary_changed {
+            self.particles.neighborhood.update_boundary(&self.particles.boundary_particles);
+            self.boundary_changed = false;
+        }
     }
 }
