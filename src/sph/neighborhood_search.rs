@@ -75,16 +75,20 @@ impl NeighborhoodSearch {
 
     pub fn update(&mut self, positions: &[Point]) {
         // Adjust size. (not paralized since expected to be small)
-        if self.particles.len() < positions.len() {
-            self.particles.reserve(positions.len());
-            for new_pidx in self.particles.len()..positions.len() {
-                self.particles.push(Particle {
-                    pidx: new_pidx as ParticleIndex,
-                    cidx: 0,
-                }); // todo: compute added particles on the spot and leave out later?
+        match self.particles.len().cmp(&positions.len()) {
+            std::cmp::Ordering::Greater => {
+                unimplemented!("Removing particles not impemented yet");
             }
-        } else if self.particles.len() > positions.len() {
-            unimplemented!("Removing particles not impemented yet");
+            std::cmp::Ordering::Less => {
+                self.particles.reserve(positions.len());
+                for new_pidx in self.particles.len()..positions.len() {
+                    self.particles.push(Particle {
+                        pidx: new_pidx as ParticleIndex,
+                        cidx: 0,
+                    }); // todo: compute added particles on the spot and leave out later?
+                }
+            }
+            std::cmp::Ordering::Equal => (),
         }
 
         // Update cell indices. Todo: Parallize
@@ -115,30 +119,25 @@ impl NeighborhoodSearch {
 
     // finds cell array index first cell that has an equal or bigger for a given CellIndex
     fn find_next_cell(cells: &[Cell], cidx: CellIndex) -> usize {
-        let mut min = 0;
-        let mut max = cells.len();
         const LINEAR_SEARCH_THRESHHOLD: usize = 16;
-
-        loop {
-            let range = max - min;
-            if range <= LINEAR_SEARCH_THRESHHOLD {
-                //for (pos, cell) in cells.iter().enumerate().take(max).skip(min) {
-                for pos in min..max {
-                    if cells[pos].cidx >= cidx {
-                        return pos;
-                    }
-                }
-                return max;
-            }
-            let mid = min + range / 2;
-            if cells[mid].cidx == cidx {
-                return mid;
-            } else if cells[mid].cidx < cidx {
-                min = mid;
-            } else {
-                max = mid;
+        let mut min = 0;
+        let mut max = cells.len(); // exclusive
+        let mut range = max - min;
+        while range > LINEAR_SEARCH_THRESHHOLD {
+            range /= 2;
+            let mid = min + range;
+            match unsafe { cells.get_unchecked(mid) }.cidx.cmp(&cidx) {
+                std::cmp::Ordering::Greater => max = mid,
+                std::cmp::Ordering::Less => min = mid,
+                std::cmp::Ordering::Equal => return mid,
             }
         }
+        for pos in min..max {
+            if unsafe { cells.get_unchecked(pos) }.cidx >= cidx {
+                return pos;
+            }
+        }
+        max
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
@@ -154,6 +153,7 @@ impl NeighborhoodSearch {
 
         const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
 
+        // Note: Already tried doing this with iterators. it's hard to do and slow!
         let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
         let mut cell = self.cells[cell_arrayidx];
 
@@ -165,8 +165,9 @@ impl NeighborhoodSearch {
 
                 // Try next. Prefer to just grind the array, but at some point use bigmin to jump ahead.
                 if num_misses > MAX_CONSECUTIVE_CELL_MISSES {
-                    let expected_next = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
-                    cell_arrayidx = Self::find_next_cell(&self.cells, expected_next);
+                    let expected_next_cidx = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
+                    cell_arrayidx += Self::find_next_cell(&self.cells[cell_arrayidx..], expected_next_cidx);
+                    assert!(expected_next_cidx > cell.cidx);
                 } else {
                     cell_arrayidx += 1;
                 }
@@ -179,11 +180,12 @@ impl NeighborhoodSearch {
 
             // find particle range
             let first_particle = cell.first_particle;
-            cell_arrayidx += 1;
-            cell = self.cells[cell_arrayidx];
-            while super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
+            loop {
                 cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
                 cell = self.cells[cell_arrayidx];
+                if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
+                    break;
+                }
             }
             let last_particle = cell.first_particle;
             assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
