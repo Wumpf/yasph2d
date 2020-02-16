@@ -18,11 +18,12 @@ pub(super) fn encode(x: u32, y: u32) -> u32 {
 
 // loads a bit pattern for a given dimension.
 // Width of applied bit pattern is patternlen
+// dim = 0 for x; dim = 1 for y
+//
 // Example:
 //   bit pattern 1011 (patternlen==8) for dim=1=y is first spread out 1x0x_1x1x
 //   then all these bits are replaced in value so if value was 1111_1111_0011_1111, it is now 1111_1111_1001_1111
 fn load_bits(pattern: u32, patternlen: u32, value: u32, dim: u32) -> u32 {
-    // dim = 0 for x; dim = 1 for y
     let wipe_mask = !(super::morton::part_1by1(0xffff >> (16 - (patternlen / 2 + 1))) << dim); // clears affected bits
     let pattern = super::morton::part_1by1(pattern) << dim; // spreads pattern
     (value & wipe_mask) | pattern
@@ -42,24 +43,29 @@ pub(super) fn find_bigmin(m_cur: u32, m_min: u32, m_max: u32) -> u32 {
     let mut bigmin = 0;
     for bitpos in (0..32_u32).rev() {
         let setbit = 1 << bitpos;
-        let minbit = m_min & setbit;
-        let maxbit = m_max & setbit;
-        let curbit = m_cur & setbit;
+        let minbit = (m_min & setbit) != 0;
+        let maxbit = (m_max & setbit) != 0;
+        let curbit = (m_cur & setbit) != 0;
         let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
         let mask = 1 << (bitpos / 2);
-        if curbit == 0 && minbit == 0 && maxbit > 0 {
-            bigmin = load_bits(mask, bitpos, m_min, dim);
-            m_max = load_bits(mask - 1, bitpos, m_max, dim);
-        } else if curbit == 0 && minbit > 0 && maxbit == 0 {
-            unreachable!();
-        } else if curbit == 0 && minbit > 0 && maxbit > 0 {
-            return m_min;
-        } else if curbit > 0 && minbit == 0 && maxbit == 0 {
-            return bigmin;
-        } else if curbit > 0 && minbit == 0 && maxbit > 0 {
-            m_min = load_bits(mask, bitpos, m_min, dim);
-        } else if curbit > 0 && minbit > 0 && maxbit == 0 {
-            unreachable!();
+
+        if curbit {
+            if !minbit && !maxbit {
+                return bigmin;
+            } else if !minbit && maxbit {
+                m_min = load_bits(mask, bitpos, m_min, dim);
+            } else if minbit && !maxbit {
+                unreachable!();
+            }
+        } else {
+            if !minbit && maxbit {
+                bigmin = load_bits(mask, bitpos, m_min, dim);
+                m_max = load_bits(mask - 1, bitpos, m_max, dim);
+            } else if minbit && !maxbit {
+                unreachable!();
+            } else if minbit && maxbit {
+                return m_min;
+            }
         }
     }
     bigmin
