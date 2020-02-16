@@ -48,6 +48,8 @@ impl NeighborhoodSearch {
             particles: Vec::new(),
             cells: Vec::new(),
 
+            // todo: we can create a huge domain, but still there is a limited domain! should be safe about this and have a max
+            // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
             grid_min: Point::new(-100.0, -100.0),
         }
     }
@@ -112,7 +114,7 @@ impl NeighborhoodSearch {
     }
 
     // finds cell array index first cell that has an equal or bigger for a given CellIndex
-    fn search_cell(cells: &[Cell], cidx: CellIndex) -> usize {
+    fn find_next_cell(cells: &[Cell], cidx: CellIndex) -> usize {
         let mut min = 0;
         let mut max = cells.len();
         const LINEAR_SEARCH_THRESHHOLD: usize = 16;
@@ -139,7 +141,7 @@ impl NeighborhoodSearch {
         }
     }
 
-    pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(usize) -> ()) {
+    pub fn foreach_potential_neighbor(&self, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
         let cellpos_min = Self::position_to_cellpos(self.grid_min, self.cell_size_inv, position - Vector::new(self.radius, self.radius));
         let cidx_min_xbits = super::morton::part_1by1(cellpos_min.x);
         let cidx_min_ybits = super::morton::part_1by1(cellpos_min.y) << 1;
@@ -150,31 +152,53 @@ impl NeighborhoodSearch {
         let cidx_max_ybits = super::morton::part_1by1(cellpos_max.y) << 1;
         let cidx_max = cidx_max_xbits | cidx_max_ybits;
 
-        // todo use
-        //const MAX_CONSECUTIVE_MISSES: u32 = 3;
+        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
 
-        let first_cell = Self::search_cell(&self.cells, cidx_min);
-        let mut num_misses = 0;
-        let mut expected_next = 0;
-        for i in first_cell..(self.cells.len() - 1) {
-            let cell = self.cells[i];
-            if cell.cidx > cidx_max {
+        let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
+        let mut cell = self.cells[cell_arrayidx];
+
+        while cell.cidx <= cidx_max {
+            // skip until cell is in rect
+            let mut num_misses = 0;
+            while !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
+                num_misses += 1;
+
+                // Try next. Prefer to just grind the array, but at some point use bigmin to jump ahead.
+                if num_misses > MAX_CONSECUTIVE_CELL_MISSES {
+                    let expected_next = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
+                    cell_arrayidx = Self::find_next_cell(&self.cells, expected_next);
+                } else {
+                    cell_arrayidx += 1;
+                }
+                cell = self.cells[cell_arrayidx];
+
+                if cell.cidx > cidx_max {
+                    return;
+                }
+            }
+
+            // find particle range
+            let first_particle = cell.first_particle;
+            cell_arrayidx += 1;
+            cell = self.cells[cell_arrayidx];
+            while super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
+                cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
+                cell = self.cells[cell_arrayidx];
+            }
+            let last_particle = cell.first_particle;
+            assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
+
+            // Consume particles.
+            for p in first_particle..last_particle {
+                f(self.particles[p as usize].pidx);
+            }
+
+            // We know current cell isn't in the rect, so skip it.
+            cell_arrayidx += 1;
+            if cell_arrayidx >= self.cells.len() {
                 break;
             }
-
-            if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
-                assert!(expected_next <= super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max));
-                num_misses += 1;
-                expected_next = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
-                continue;
-            }
-
-            assert!(num_misses == 0 || cell.cidx >= expected_next);
-            num_misses = 0;
-
-            for p in cell.first_particle..self.cells[i + 1].first_particle {
-                f(self.particles[p as usize].pidx as usize); // todo this integer casting thing is getting out of hand
-            }
+            cell = self.cells[cell_arrayidx];
         }
     }
 }

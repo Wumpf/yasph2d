@@ -24,17 +24,27 @@ pub struct Particles {
 impl Particles {
     const OVERLAP_THRESHOLD: Real = 0.00001;
 
-    pub(super) fn foreach_neighbor_particle(neighborhood: &NeighborhoodSearch, positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(usize, Real, Vector) -> ()) {
-        neighborhood.foreach_potential_neighbor(ri, #[inline(always)] |j| {
-            let rj = positions[j];
-            let ri_to_rj = rj - ri;
-            let r_sq = ri_to_rj.magnitude2();
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
-                // Skips self and and degenerated overlaps
-                return;
-            }
-            f(j, r_sq, ri_to_rj);
-        });
+    pub(super) fn foreach_neighbor_particle(
+        neighborhood: &NeighborhoodSearch,
+        positions: &[Point],
+        smoothing_length_sq: Real,
+        ri: Point,
+        mut f: impl FnMut(usize, Real, Vector) -> (),
+    ) {
+        neighborhood.foreach_potential_neighbor(
+            ri,
+            #[inline(always)]
+            |j| {
+                let rj = positions[j as usize];
+                let ri_to_rj = rj - ri;
+                let r_sq = ri_to_rj.magnitude2();
+                if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                    // Skips self and and degenerated overlaps
+                    return;
+                }
+                f(j as usize, r_sq, ri_to_rj);
+            },
+        );
     }
 
     pub(super) fn foreach_neighbor_particle_noindex(
@@ -44,19 +54,28 @@ impl Particles {
         ri: Point,
         mut f: impl FnMut(Real, Vector) -> (),
     ) {
-        neighborhood.foreach_potential_neighbor(ri, #[inline(always)] |j| {
-            let rj = positions[j];
-            let ri_to_rj = rj - ri;
-            let r_sq = ri_to_rj.magnitude2();
-            if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
-                // Skips self and and degenerated overlaps
-                return;
-            }
-            f(r_sq, ri_to_rj);
-        });
+        neighborhood.foreach_potential_neighbor(
+            ri,
+            #[inline(always)]
+            |j| {
+                let rj = positions[j as usize];
+                let ri_to_rj = rj - ri;
+                let r_sq = ri_to_rj.magnitude2();
+                if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
+                    // Skips self and and degenerated overlaps
+                    return;
+                }
+                f(r_sq, ri_to_rj);
+            },
+        );
     }
 
-    pub(super) fn foreach_neighbor_particle_boundary(positions: &[Point], smoothing_length_sq: Real, ri: Point, mut f: impl FnMut(Real, Vector) -> ()) {
+    pub(super) fn foreach_neighbor_particle_boundary(
+        positions: &[Point],
+        smoothing_length_sq: Real,
+        ri: Point,
+        mut f: impl FnMut(Real, Vector) -> (),
+    ) {
         for rj in positions.iter() {
             let ri_to_rj = rj - ri;
             let r_sq = ri_to_rj.magnitude2();
@@ -65,7 +84,7 @@ impl Particles {
                 continue;
             }
             f(r_sq, ri_to_rj);
-        };
+        }
     }
 }
 
