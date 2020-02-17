@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, Criterion};
 
 use cgmath::prelude::*;
-use sphrs2d::sph::smoothing_kernel::*;
-use sphrs2d::units::*;
+use yasph2d::sph::smoothing_kernel::*;
+use yasph2d::units::*;
 
 fn bench_kernels(c: &mut Criterion) {
     let smoothing_length = black_box(1.0);

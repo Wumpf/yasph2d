@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 mod camera;
 
 use camera::*;
-use sphrs2d::sph::*;
-use sphrs2d::units::*;
+use yasph2d::sph::*;
+use yasph2d::units::*;
 
 fn main() -> GameResult {
-    let context_builder = ggez::ContextBuilder::new("2d sph", "AndreasR")
-        .window_setup(conf::WindowSetup::default().title("2d sph").samples(conf::NumSamples::Eight))
+    let context_builder = ggez::ContextBuilder::new("YaSPH2D", "AndreasR")
+        .window_setup(conf::WindowSetup::default().title("YaSPH2D").samples(conf::NumSamples::Eight))
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
     let (ctx, event_loop) = &mut context_builder.build()?;
     let state = &mut MainState::new(ctx);

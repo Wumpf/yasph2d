@@ -1,5 +1,5 @@
 [package]
-name = "sphrs2d"
+name = "yasph2d"
 version = "0.1.0"
 authors = ["Andreas Reich <r_andreas2@web.de>"]
 edition = "2018"
