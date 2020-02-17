@@ -116,7 +116,7 @@ fn load_bits(pattern: u32, patternlen: u32, value: u32, dim: u32) -> u32 {
 // http://hermanntropf.de/media/multidimensionalrangequery.pdf
 // https://web.archive.org/web/20180311015006/https://docs.raima.com/rdme/9_1/Content/GS/POIexample.htm
 // https://stackoverflow.com/questions/30170783/how-to-use-morton-orderz-order-curve-in-range-search
-pub(super) fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
+pub fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
     let mut min_morton = min_morton;
     let mut max_morton = max_morton;
     let mut bigmin = 0;
@@ -143,4 +143,50 @@ pub(super) fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
         }
     }
     bigmin
+}
+
+#[cfg(test)]
+mod tests {
+    mod encode {
+        use super::super::*;
+
+        #[test]
+        fn lookup_works_for_examples() {
+            assert_eq!(encode_lookup(2, 2), 12);
+            assert_eq!(encode_lookup(3, 6), 45);
+            assert_eq!(encode_lookup(4, 0), 16);
+            assert_eq!(encode_lookup(0b1111_0001_0010_0000, 0b1001_1101_1000_1100), 0b1101_0111_1010_0011_1000_0100_1010_0000);
+        }
+
+        #[test]
+        fn bitfiddle_works_for_examples() {
+            assert_eq!(encode_bitfiddle(2, 2), 12);
+            assert_eq!(encode_bitfiddle(3, 6), 45);
+            assert_eq!(encode_bitfiddle(4, 0), 16);
+            assert_eq!(encode_bitfiddle(0b1111_0001_0010_0000, 0b1001_1101_1000_1100), 0b1101_0111_1010_0011_1000_0100_1010_0000);
+        }
+    }
+
+    mod find_bigmin {
+        use super::super::*;
+
+        #[test]
+        fn jumps_to_next_pos_in_rect() {
+            // from https://en.wikipedia.org/wiki/Z-order_curve#Use_with_one-dimensional_data_structures_for_range_searching
+            assert_eq!(find_bigmin(16, 12, 45), 36);
+            assert_eq!(find_bigmin(19, 12, 45), 36);
+            assert_eq!(find_bigmin(29, 12, 45), 36);
+            assert_eq!(find_bigmin(35, 12, 45), 36);
+        }
+
+        #[test]
+        fn within_rect_gives_next_in_rect() {
+            assert_eq!(find_bigmin(14, 12, 45), 15);
+        }
+
+        #[test]
+        fn at_border_of_section_gives_next_in_rect() {
+            assert_eq!(find_bigmin(15, 12, 45), 36);
+        }
+    }
 }
