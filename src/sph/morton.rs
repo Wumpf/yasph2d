@@ -125,20 +125,24 @@ pub fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
         let curbit = (m_cur & setbit) != 0;
         let minbit = (min_morton & setbit) != 0;
         let maxbit = (max_morton & setbit) != 0;
-        let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
-        let mask = 1 << (bitpos / 2);
-
+        
         match (curbit, minbit, maxbit) {
             (false, false, false) => (),
             (false, false, true) => {
+                let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
+                let mask = 1 << (bitpos / 2);
                 bigmin = load_bits(mask, bitpos, min_morton, dim);
                 max_morton = load_bits(mask - 1, bitpos, max_morton, dim);
             }
-            (false, true, false) => unreachable!(),
+            (false, true, false) => unsafe { std::hint::unreachable_unchecked() },
             (false, true, true) => return min_morton,
             (true, false, false) => return bigmin,
-            (true, false, true) => min_morton = load_bits(mask, bitpos, min_morton, dim),
-            (true, true, false) => unreachable!(),
+            (true, false, true) => {
+                let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
+                let mask = 1 << (bitpos / 2);
+                min_morton = load_bits(mask, bitpos, min_morton, dim)
+            },
+            (true, true, false) => unsafe { std::hint::unreachable_unchecked() },
             (true, true, true) => (),
         }
     }
