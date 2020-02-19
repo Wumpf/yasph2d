@@ -32,11 +32,13 @@ fn bench_neighborhood_search(c: &mut Criterion) {
             NUM_POSITIONS, DENSITY, search_radius
         ),
         |b| {
+            let mut pindex = 0; // cycle through position for a more balanced result
             b.iter(|| {
                 let mut accum: Vector = Zero::zero();
-                searcher.foreach_potential_neighbor(positions[321], |i| {
+                searcher.foreach_potential_neighbor(positions[pindex], |i| {
                     accum += positions[i as usize].to_vec();
                 });
+                pindex = (pindex + 1) % NUM_POSITIONS;
                 accum
             })
         },
@@ -44,8 +46,7 @@ fn bench_neighborhood_search(c: &mut Criterion) {
 }
 
 fn config() -> Criterion {
-    Criterion::default()
-        .warm_up_time(core::time::Duration::new(0, 1000))
+    Criterion::default().warm_up_time(core::time::Duration::new(0, 1000))
 }
 
 criterion_group!(
