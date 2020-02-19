@@ -9,9 +9,7 @@ fn bench_morton(c: &mut Criterion) {
         let cur = encode(4, 0);
 
         // TODO: How to construct a bad case for this? perf is highly input dependent
-        c.bench_function("find_bigmin", |b| {
-            b.iter(|| find_bigmin(black_box(cur), black_box(min), black_box(max)))
-        });
+        c.bench_function("find_bigmin", |b| b.iter(|| find_bigmin(black_box(cur), black_box(min), black_box(max))));
     }
     {
         let x: u32 = 123;
@@ -27,9 +25,7 @@ fn bench_morton(c: &mut Criterion) {
 }
 
 fn config() -> Criterion {
-    Criterion::default()
-        .warm_up_time(core::time::Duration::new(0, 500))
-        .noise_threshold(0.05)
+    Criterion::default().warm_up_time(core::time::Duration::new(0, 500)).noise_threshold(0.05)
 }
 
 criterion_group!(

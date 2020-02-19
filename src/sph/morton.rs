@@ -125,7 +125,7 @@ pub fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
         let curbit = (m_cur & setbit) != 0;
         let minbit = (min_morton & setbit) != 0;
         let maxbit = (max_morton & setbit) != 0;
-        
+
         match (curbit, minbit, maxbit) {
             (false, false, false) => (),
             (false, false, true) => {
@@ -141,7 +141,7 @@ pub fn find_bigmin(m_cur: u32, min_morton: u32, max_morton: u32) -> u32 {
                 let dim = bitpos % 2; // dim = 0 for x; dim = 1 for y
                 let mask = 1 << (bitpos / 2);
                 min_morton = load_bits(mask, bitpos, min_morton, dim)
-            },
+            }
             (true, true, false) => unsafe { std::hint::unreachable_unchecked() },
             (true, true, true) => (),
         }
@@ -159,7 +159,10 @@ mod tests {
             assert_eq!(encode_lookup(2, 2), 12);
             assert_eq!(encode_lookup(3, 6), 45);
             assert_eq!(encode_lookup(4, 0), 16);
-            assert_eq!(encode_lookup(0b1111_0001_0010_0000, 0b1001_1101_1000_1100), 0b1101_0111_1010_0011_1000_0100_1010_0000);
+            assert_eq!(
+                encode_lookup(0b1111_0001_0010_0000, 0b1001_1101_1000_1100),
+                0b1101_0111_1010_0011_1000_0100_1010_0000
+            );
         }
 
         #[test]
@@ -167,7 +170,10 @@ mod tests {
             assert_eq!(encode_bitfiddle(2, 2), 12);
             assert_eq!(encode_bitfiddle(3, 6), 45);
             assert_eq!(encode_bitfiddle(4, 0), 16);
-            assert_eq!(encode_bitfiddle(0b1111_0001_0010_0000, 0b1001_1101_1000_1100), 0b1101_0111_1010_0011_1000_0100_1010_0000);
+            assert_eq!(
+                encode_bitfiddle(0b1111_0001_0010_0000, 0b1001_1101_1000_1100),
+                0b1101_0111_1010_0011_1000_0100_1010_0000
+            );
         }
     }
 
