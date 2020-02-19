@@ -23,11 +23,7 @@ fn bench_neighborhood_search(c: &mut Criterion) {
             "neighborhood_search.update (warm, but unsorted positions!), {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
-        |b| {
-            b.iter(|| {
-                searcher.update(&positions)
-            })
-        },
+        |b| b.iter(|| searcher.update(&positions)),
     );
 
     c.bench_function(
@@ -48,7 +44,8 @@ fn bench_neighborhood_search(c: &mut Criterion) {
 }
 
 fn config() -> Criterion {
-    Criterion::default().warm_up_time(core::time::Duration::new(0, 1000)).noise_threshold(0.05)
+    Criterion::default()
+        .warm_up_time(core::time::Duration::new(0, 1000))
 }
 
 criterion_group!(

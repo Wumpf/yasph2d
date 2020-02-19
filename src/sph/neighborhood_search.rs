@@ -130,7 +130,7 @@ impl PointSet {
         let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
         let cidx_max_ybits = cidx_max & super::morton::MORTON_YBITS;
 
-        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 0;
+        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
 
         // Note: Already tried doing this with iterators. it's hard to do and slow!
         let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
