@@ -12,12 +12,18 @@ use camera::*;
 use yasph2d::sph::*;
 use yasph2d::units::*;
 
+use microprofile;
+
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("YaSPH2D", "AndreasR")
         .window_setup(conf::WindowSetup::default().title("YaSPH2D").samples(conf::NumSamples::Eight))
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
     let (ctx, event_loop) = &mut context_builder.build()?;
     let state = &mut MainState::new(ctx);
+
+    microprofile::init!();
+    microprofile::set_enable_all_groups!(true);
+
     event::run(ctx, event_loop, state)
 }
 
@@ -119,6 +125,8 @@ const MAX_ALLOWED_SIM_PROCESSING_TIME: Real = 1.0 / 10.0; // if render takes 0 t
 
 impl EventHandler for MainState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
+        microprofile::scope!("MainState", "update");
+
         self.simulationstep_count = 0;
 
         if keyboard::is_key_pressed(ctx, KeyCode::Space) {
@@ -162,44 +170,53 @@ impl EventHandler for MainState {
             }
         }
 
+        microprofile::flip!();
         Ok(())
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
+        microprofile::scope!("MainState", "draw");
+
         graphics::clear(ctx, [0.4, 0.4, 0.45, 1.0].into());
         graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
         graphics::apply_transformations(ctx)?;
 
-        let boundary_color = graphics::Color {
-            r: 0.2,
-            g: 0.2,
-            b: 0.2,
-            a: 1.0,
-        };
-        for (p, a) in self
-            .fluid_world
-            .particles
-            .positions
-            .iter()
-            .zip(self.fluid_world.particles.velocities.iter())
         {
-            let c = heatmap_color((a.magnitude() * 0.1) as f32);
-            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
-            graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
-        }
-        for p in self.fluid_world.particles.boundary_particles.iter() {
-            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
-            graphics::draw(
-                ctx,
-                &self.particle_mesh,
-                ggez::graphics::DrawParam::default().dest(rp).color(boundary_color),
-            )?;
+            microprofile::scope!("MainState", "draw fluid");
+
+            let boundary_color = graphics::Color {
+                r: 0.2,
+                g: 0.2,
+                b: 0.2,
+                a: 1.0,
+            };
+            for (p, a) in self
+                .fluid_world
+                .particles
+                .positions
+                .iter()
+                .zip(self.fluid_world.particles.velocities.iter())
+            {
+                let c = heatmap_color((a.magnitude() * 0.1) as f32);
+                let rp: RenderPoint = RenderPoint::new(p.x, p.y);
+                graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
+            }
+            for p in self.fluid_world.particles.boundary_particles.iter() {
+                let rp: RenderPoint = RenderPoint::new(p.x, p.y);
+                graphics::draw(
+                    ctx,
+                    &self.particle_mesh,
+                    ggez::graphics::DrawParam::default().dest(rp).color(boundary_color),
+                )?;
+            }
+
+            graphics::pop_transform(ctx);
+            graphics::apply_transformations(ctx)?;
         }
 
-        graphics::pop_transform(ctx);
-        graphics::apply_transformations(ctx)?;
-
         {
+            microprofile::scope!("MainState", "text");
+
             let fps = timer::fps(ctx);
             let average_simulation_step_duration =
                 self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
@@ -226,7 +243,10 @@ impl EventHandler for MainState {
             }
         }
 
-        graphics::present(ctx)?;
+        {
+            microprofile::scope!("MainState", "present");
+            graphics::present(ctx)?;
+        }
         Ok(())
     }
 }

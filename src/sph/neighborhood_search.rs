@@ -216,10 +216,12 @@ impl NeighborhoodSearch {
     }
 
     pub fn update_boundary(&mut self, positions: &[Point]) {
+        microprofile::scope!("NeighborhoodSearch", "update_boundary");
         self.boundary_particles.update(&self.grid, positions);
     }
 
     pub fn update(&mut self, positions: &[Point]) {
+        microprofile::scope!("NeighborhoodSearch", "update");
         self.dynamic_particles.update(&self.grid, positions);
     }
 

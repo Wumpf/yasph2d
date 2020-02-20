@@ -52,6 +52,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     // However, all uses of the factor in the paper divide density again, so no need for having it in here in the first place!
     // (seemed to make sense for derivation though :))
     fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld, kernel: impl Kernel + std::marker::Sync) {
+        microprofile::scope!("DFSPHSolver", "compute_alpha_factors");
         const EPSILON: Real = 1e-6;
         let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
         let particle_mass = fluid_world.particle_mass();
@@ -90,6 +91,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     }
 
     fn predict_densities(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
+        microprofile::scope!("DFSPHSolver", "predict_densities");
         let smoothing_length = fluid_world.smoothing_length();
         let smoothing_length_sq = smoothing_length * smoothing_length;
         let particle_mass = fluid_world.particle_mass();
@@ -129,6 +131,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     }
 
     fn update_velocity_prediction(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
+        microprofile::scope!("DFSPHSolver", "update_velocity_prediction");
         let smoothing_length = fluid_world.smoothing_length();
         let smoothing_length_sq = smoothing_length * smoothing_length;
         let particle_mass = fluid_world.particle_mass();
@@ -170,10 +173,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     fn correct_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         // todo: warmup & general use of values from previous frame
+        microprofile::scope!("DFSPHSolver", "correct_density_error");
 
         let mut num_iter = 0;
 
         loop {
+            microprofile::scope!("DFSPHSolver", "density_iteration");
+
             self.predict_densities(dt, fluid_world);
             self.update_velocity_prediction(dt, fluid_world);
             num_iter += 1;
@@ -211,6 +217,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
     }
 
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+        microprofile::scope!("DFSPHSolver", "simulation_step");
+
         // ensure densities and alpha factors were initialized previously ("warmup")
         // Todo: Not happy about the way added particles are handled here. This sort of works for adding, but removing this way is impossible with this design!
         if self.alpha_values.len() != fluid_world.particles.positions.len() {
@@ -232,6 +240,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
 
         // compute velocity prediction
         {
+            microprofile::scope!("DFSPHSolver", "velocity prediction");
+
             let particle_mass = fluid_world.particle_mass();
             let viscosity_model = &self.viscosity_model;
             let force_to_particle_velocitychange = dt / particle_mass;
@@ -266,14 +276,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         self.correct_density_error(dt, fluid_world);
 
         // advect particles
-        fluid_world
-            .particles
-            .positions
-            .par_iter_mut()
-            .zip(self.predicted_velocities.par_iter())
-            .for_each(|(position, predicted_velocity)| {
-                *position += predicted_velocity * dt;
-            });
+        {
+            microprofile::scope!("DFSPHSolver", "advect");
+
+            fluid_world
+                .particles
+                .positions
+                .par_iter_mut()
+                .zip(self.predicted_velocities.par_iter())
+                .for_each(|(position, predicted_velocity)| {
+                    *position += predicted_velocity * dt;
+                });
+        }
         fluid_world.update_neighborhood_datastructure();
 
         // todo: fuse density & alpha factor computation.

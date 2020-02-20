@@ -39,6 +39,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
     }
 
     fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
+        microprofile::scope!("WCSPHSolver", "update_accellerations");
         let mass = fluid_world.particle_mass();
 
         // pressure & viscosity forces
@@ -104,22 +105,26 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
     }
 
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+        microprofile::scope!("WCSPHSolver", "simulation_step");
         self.accellerations.resize(fluid_world.particles.positions.len(), cgmath::Zero::zero());
 
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
-        for ((pos, v), a) in fluid_world
-            .particles
-            .positions
-            .iter_mut()
-            .zip(fluid_world.particles.velocities.iter_mut())
-            .zip(self.accellerations.iter())
         {
-            *pos += *v * dt + a * (0.5 * dt * dt);
-            // partial update of velocity.
-            // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
-            // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
-            *v += 0.5 * dt * a;
+            microprofile::scope!("WCSPHSolver", "leap frog 1");
+            for ((pos, v), a) in fluid_world
+                .particles
+                .positions
+                .iter_mut()
+                .zip(fluid_world.particles.velocities.iter_mut())
+                .zip(self.accellerations.iter())
+            {
+                *pos += *v * dt + a * (0.5 * dt * dt);
+                // partial update of velocity.
+                // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
+                // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
+                *v += 0.5 * dt * a;
+            }
         }
 
         fluid_world.update_neighborhood_datastructure();
@@ -127,8 +132,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         self.update_accellerations(fluid_world, dt);
 
         // part 2 of leap frog integration. Finish updating velocity.
-        for (v, a) in fluid_world.particles.velocities.iter_mut().zip(self.accellerations.iter()) {
-            *v += 0.5 * dt * a;
+        {
+            microprofile::scope!("WCSPHSolver", "leap frog 2");
+            for (v, a) in fluid_world.particles.velocities.iter_mut().zip(self.accellerations.iter()) {
+                *v += 0.5 * dt * a;
+            }
         }
     }
 }

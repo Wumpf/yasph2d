@@ -203,6 +203,7 @@ impl FluidParticleWorld {
     }
 
     pub(super) fn update_densities(&mut self, kernel: impl Kernel + std::marker::Sync) {
+        microprofile::scope!("FluidParticleWorld", "update_densities");
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.particle_mass();
@@ -246,6 +247,7 @@ impl FluidParticleWorld {
     }
 
     pub(super) fn update_neighborhood_datastructure(&mut self) {
+        microprofile::scope!("FluidParticleWorld", "update_neighborhood_datastructure");
         self.particles.neighborhood.update(&self.particles.positions);
 
         if self.boundary_changed {
