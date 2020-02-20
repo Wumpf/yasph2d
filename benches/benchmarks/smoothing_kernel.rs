@@ -16,19 +16,36 @@ fn bench_kernels(c: &mut Criterion) {
     // It seems Criterion is not really suited to benchmark functions _that_ small.
 
     {
-        let kernel = black_box(CubicSpline::new(smoothing_length));
-        c.bench_function("CubicSpline.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
-        c.bench_function("CubicSpline.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        let mut group_eval = c.benchmark_group("smoothing_kernel.evaluate");
+        {
+            let kernel = black_box(CubicSpline::new(smoothing_length));
+            group_eval.bench_function("CubicSpline.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
+        }
+        {
+            let kernel = black_box(Poly6::new(smoothing_length));
+            group_eval.bench_function("Poly6.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
+        }
+        {
+            let kernel = black_box(Spiky::new(smoothing_length));
+            group_eval.bench_function("Spiky.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
+        }
+        group_eval.finish();
     }
     {
-        let kernel = black_box(Poly6::new(smoothing_length));
-        c.bench_function("Poly6.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
-        c.bench_function("Poly6.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
-    }
-    {
-        let kernel = black_box(Spiky::new(smoothing_length));
-        c.bench_function("Spiky.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
-        c.bench_function("Spiky.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        let mut group_grad = c.benchmark_group("smoothing_kernel.gradient");
+        {
+            let kernel = black_box(CubicSpline::new(smoothing_length));
+            group_grad.bench_function("CubicSpline.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        }
+        {
+            let kernel = black_box(Poly6::new(smoothing_length));
+            group_grad.bench_function("Poly6.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        }
+        {
+            let kernel = black_box(Spiky::new(smoothing_length));
+            group_grad.bench_function("Spiky.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        }
+        group_grad.finish();
     }
 }
 
