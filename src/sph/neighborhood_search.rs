@@ -1,5 +1,7 @@
 use crate::units::*;
 
+use super::scratch_buffer::ScratchBufferStore;
+
 pub type ParticleIndex = u32;
 pub type CellIndex = u32;
 
@@ -50,12 +52,30 @@ impl GridProperties {
 
 #[derive(Default)]
 struct PointSet {
-    particles: Vec<Particle>,
+    particles: Vec<Particle>, // TODO: Remove, make this temp, take it apart
     cells: Vec<Cell>,
 }
 
 impl PointSet {
-    pub fn update(&mut self, grid: &GridProperties, positions: &[Point]) {
+    fn apply_sorting<T: Copy>(&self, scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
+        assert_eq!(scratch_buffer.len(), buffer_to_sort.len());
+        assert_eq!(self.particles.len(), buffer_to_sort.len());
+        for (pos, p) in scratch_buffer.iter_mut().zip(self.particles.iter()) {
+            *pos = buffer_to_sort[p.pidx as usize];
+        }
+        std::mem::swap(scratch_buffer, buffer_to_sort);
+    }
+
+    // note: Applying sorting is a bit costly and only solvers know which attributes are discarded/recomputed and which need the new sorting applied.
+    pub fn update(
+        &mut self,
+        scratch_buffers: &mut ScratchBufferStore,
+        grid: &GridProperties,
+        positions: &mut Vec<Point>,
+        particle_attributes_vector: &mut Vec<&mut Vec<Vector>>,
+        particle_attributes_real: &mut Vec<&mut Vec<Real>>,
+    ) {
+        //, attribute_sort_callback: impl Fn(&[Particle]) -> ()) {
         // Adjust size. (not paralized since expected to be small)
         match self.particles.len().cmp(&positions.len()) {
             std::cmp::Ordering::Greater => {
@@ -80,6 +100,27 @@ impl PointSet {
 
         // Sort by cell index. Todo: Parallize
         self.particles.sort_unstable_by_key(|a| a.cidx);
+
+        // Apply sorting.
+        {
+            microprofile::scope!("NeighborhoodSearch", "apply sorting");
+            {
+                let mut scratch_buffer = scratch_buffers.get_buffer_point(positions.len());
+                self.apply_sorting(&mut scratch_buffer.buffer, positions);
+            }
+            {
+                let mut scratch_buffer = scratch_buffers.get_buffer_vector(positions.len());
+                for attribute_buffer in particle_attributes_vector.iter_mut() {
+                    self.apply_sorting(&mut scratch_buffer.buffer, *attribute_buffer);
+                }
+            }
+            {
+                let mut scratch_buffer = scratch_buffers.get_buffer_real(positions.len());
+                for attribute_buffer in particle_attributes_real.iter_mut() {
+                    self.apply_sorting(&mut scratch_buffer.buffer, *attribute_buffer);
+                }
+            }
+        }
 
         // create cells. Todo: Parallize by doing a prefix sum first
         self.cells.clear();
@@ -171,7 +212,7 @@ impl PointSet {
 
             // Consume particles.
             for p in first_particle..last_particle {
-                f(self.particles[p as usize].pidx);
+                f(p);
             }
 
             // We know current cell isn't in the rect, so skip it.
@@ -215,14 +256,28 @@ impl NeighborhoodSearch {
         }
     }
 
-    pub fn update_boundary(&mut self, positions: &[Point]) {
+    // todo: allow boundaries to have properties
+    pub fn update_boundary(&mut self, scratch_buffers: &mut ScratchBufferStore, positions: &mut Vec<Point>) {
         microprofile::scope!("NeighborhoodSearch", "update_boundary");
-        self.boundary_particles.update(&self.grid, positions);
+        self.boundary_particles
+            .update(scratch_buffers, &self.grid, positions, &mut Vec::new(), &mut Vec::new());
     }
 
-    pub fn update(&mut self, positions: &[Point]) {
+    pub fn update(
+        &mut self,
+        scratch_buffers: &mut ScratchBufferStore,
+        positions: &mut Vec<Point>,
+        particle_attributes_vector: &mut Vec<&mut Vec<Vector>>,
+        particle_attributes_real: &mut Vec<&mut Vec<Real>>,
+    ) {
         microprofile::scope!("NeighborhoodSearch", "update");
-        self.dynamic_particles.update(&self.grid, positions);
+        self.dynamic_particles.update(
+            scratch_buffers,
+            &self.grid,
+            positions,
+            particle_attributes_vector,
+            particle_attributes_real,
+        );
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(ParticleIndex) -> ()) {

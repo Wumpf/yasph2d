@@ -229,8 +229,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             self.predicted_velocities.resize(fluid_world.particles.positions.len(), Zero::zero());
             self.predicted_densities.resize(fluid_world.particles.positions.len(), Zero::zero());
 
-            // todo: Update only new particles
-            fluid_world.update_neighborhood_datastructure();
+            // todo: Update only new particles.. HOW? better would be to only effectively add later
+            fluid_world.update_neighborhood_datastructure(Vec::new(), vec![&mut self.alpha_values]);
             fluid_world.update_densities(self.kernel);
             Self::compute_alpha_factors(&mut self.alpha_values, fluid_world, self.kernel);
         }
@@ -293,7 +293,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                     *position += predicted_velocity * dt;
                 });
         }
-        fluid_world.update_neighborhood_datastructure();
+        // only attribute other than position that we need going forward is predicted velocities!
+        fluid_world.update_neighborhood_datastructure(vec![&mut self.predicted_velocities], Vec::new());
 
         // todo: fuse density & alpha factor computation.
         // recompute densities

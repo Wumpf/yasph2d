@@ -80,8 +80,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                         let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
                         *accelleration += pressure_unsmoothed * pressure_kernel.gradient(ri_to_rj, r_sq, r);
 
-                        *accelleration +=
-                            viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, particles.velocities[j] - vi);
+                        *accelleration += viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, particles.velocities[j] - vi);
                     },
                 );
 
@@ -129,7 +128,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
             }
         }
 
-        fluid_world.update_neighborhood_datastructure();
+        fluid_world.update_neighborhood_datastructure(Vec::new(), Vec::new());
         fluid_world.update_densities(self.density_kernel);
         self.update_accellerations(fluid_world, dt);
 

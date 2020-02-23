@@ -5,6 +5,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use super::neighborhood_search::NeighborhoodSearch;
+use super::scratch_buffer::ScratchBufferStore;
 use super::smoothing_kernel::Kernel;
 
 pub struct Particles {
@@ -90,7 +91,7 @@ impl ConstantFluidProperties {
         smoothing_factor: Real,
         particle_density: Real, // #particles/m² for resting fluid
         fluid_density: Real,    // kg/m² for the resting fluid) {
-    ) -> ConstantFluidProperties { 
+    ) -> ConstantFluidProperties {
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
         ConstantFluidProperties {
             smoothing_length,
@@ -129,8 +130,11 @@ pub struct FluidParticleWorld {
     pub particles: Particles,
     pub properties: ConstantFluidProperties,
 
+    scratch_buffers: ScratchBufferStore,
+
     pub gravity: Vector, // global gravity force in m/s² (== N/kg)
 
+    // tracks whether boundary particles have been added/moved
     boundary_changed: bool,
 }
 impl FluidParticleWorld {
@@ -151,6 +155,7 @@ impl FluidParticleWorld {
                 neighborhood: NeighborhoodSearch::new(properties.smoothing_length()),
             },
             properties,
+            scratch_buffers: ScratchBufferStore::new(),
 
             gravity: Vector::new(0.0, -9.81),
 
@@ -160,13 +165,11 @@ impl FluidParticleWorld {
 
     pub fn remove_all_fluid_particles(&mut self) {
         self.particles.positions.clear();
-        self.particles.densities.clear();
         self.particles.velocities.clear();
     }
 
     pub fn remove_all_boundary_particles(&mut self) {
         self.particles.boundary_particles.clear();
-        self.particles.densities.clear();
         self.particles.velocities.clear();
     }
 
@@ -178,13 +181,10 @@ impl FluidParticleWorld {
         let num_particles_y = std::cmp::max(1, (fluid_rect.h as Real * num_particles_per_meter) as usize);
         let num_particles = num_particles_x * num_particles_y;
 
-        self.particles.positions.reserve(num_particles);
-        self.particles
-            .velocities
-            .resize(self.particles.velocities.len() + num_particles, Zero::zero());
-        self.particles
-            .densities
-            .resize(self.particles.densities.len() + num_particles, Zero::zero());
+        let new_total_particle_count = self.particles.positions.len() + num_particles;
+        self.particles.positions.reserve(new_total_particle_count);
+        self.particles.velocities.resize(new_total_particle_count, Zero::zero());
+        self.particles.densities.resize(new_total_particle_count, Zero::zero());
 
         let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(self.particles.positions.len() as u64);
 
@@ -261,12 +261,31 @@ impl FluidParticleWorld {
             });
     }
 
-    pub(super) fn update_neighborhood_datastructure(&mut self) {
+    // sorts particle attributes internally!
+    // TODO: put on particles struct
+    pub(super) fn update_neighborhood_datastructure<'a>(
+        &'a mut self,
+        additional_particle_attributes_vector: Vec<&'a mut Vec<Vector>>,
+        additional_particle_attributes_real: Vec<&'a mut Vec<Real>>,
+    ) {
         microprofile::scope!("FluidParticleWorld", "update_neighborhood_datastructure");
-        self.particles.neighborhood.update(&self.particles.positions);
+
+        let mut additional_particle_attributes_vector = additional_particle_attributes_vector;
+        additional_particle_attributes_vector.push(&mut self.particles.velocities);
+
+        let mut additional_particle_attributes_real = additional_particle_attributes_real;
+
+        self.particles.neighborhood.update(
+            &mut self.scratch_buffers,
+            &mut self.particles.positions,
+            &mut additional_particle_attributes_vector,
+            &mut additional_particle_attributes_real,
+        );
 
         if self.boundary_changed {
-            self.particles.neighborhood.update_boundary(&self.particles.boundary_particles);
+            self.particles
+                .neighborhood
+                .update_boundary(&mut self.scratch_buffers, &mut self.particles.boundary_particles);
             self.boundary_changed = false;
         }
     }
