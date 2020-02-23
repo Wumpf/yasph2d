@@ -5,7 +5,7 @@ pub use self::viscositymodel::*;
 mod fluidparticleworld;
 pub mod morton;
 pub mod neighborhood_search;
-mod scratch_buffer;
+pub mod scratch_buffer;
 pub mod smoothing_kernel;
 mod solver;
 mod viscositymodel;

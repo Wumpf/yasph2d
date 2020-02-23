@@ -2,6 +2,7 @@ use cgmath::prelude::*;
 use criterion::{black_box, criterion_group, Criterion};
 use rand::prelude::*;
 
+use yasph2d::sph::scratch_buffer::ScratchBufferStore;
 use yasph2d::sph::neighborhood_search::NeighborhoodSearch;
 use yasph2d::units::*;
 
@@ -11,19 +12,20 @@ fn bench_neighborhood_search(c: &mut Criterion) {
     let search_radius = black_box(1.0);
 
     let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(123456789);
-    let positions: Vec<Point> = std::iter::repeat_with(|| Point::from_vec(rng.gen::<Vector>() * (NUM_POSITIONS as Real / DENSITY).sqrt()))
+    let mut positions: Vec<Point> = std::iter::repeat_with(|| Point::from_vec(rng.gen::<Vector>() * (NUM_POSITIONS as Real / DENSITY).sqrt()))
         .take(NUM_POSITIONS)
         .collect();
 
+    let mut scratch_buffer_store = ScratchBufferStore::new();
     let mut searcher = NeighborhoodSearch::new(search_radius);
-    searcher.update(&positions);
+    searcher.update(&mut scratch_buffer_store, &mut positions, &mut Vec::new(), &mut Vec::new());
 
     c.bench_function(
         &format!(
-            "neighborhood_search.update (warm, but unsorted positions!), {} positions, {} density, {} search_radius",
+            "neighborhood_search.update (warm), {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
-        |b| b.iter(|| searcher.update(&positions)),
+        |b| b.iter(|| searcher.update(&mut scratch_buffer_store, &mut positions, &mut Vec::new(), &mut Vec::new())),
     );
 
     c.bench_function(
