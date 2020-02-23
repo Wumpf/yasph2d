@@ -79,42 +79,23 @@ impl Particles {
     }
 }
 
-pub struct FluidParticleWorld {
-    pub particles: Particles,
-
+pub struct ConstantFluidProperties {
     smoothing_length: Real, // typically expressed as 'h'
     particle_density: Real, // #particles/m² for resting fluid
     fluid_density: Real,    // kg/m² for the resting fluid (ρ, rho)
-
-    pub gravity: Vector, // global gravity force in m/s² (== N/kg)
-
-    boundary_changed: bool,
 }
-impl FluidParticleWorld {
-    pub fn new(
+
+impl ConstantFluidProperties {
+    fn new(
         smoothing_factor: Real,
         particle_density: Real, // #particles/m² for resting fluid
-        fluid_density: Real,    // kg/m² for the resting fluid
-    ) -> FluidParticleWorld {
+        fluid_density: Real,    // kg/m² for the resting fluid) {
+    ) -> ConstantFluidProperties { 
         let smoothing_length = 2.0 * Self::particle_radius_from_particle_density(particle_density) * smoothing_factor;
-        FluidParticleWorld {
-            particles: Particles {
-                positions: Vec::new(),
-                velocities: Vec::new(),
-                densities: Vec::new(),
-
-                boundary_particles: Vec::new(),
-
-                neighborhood: NeighborhoodSearch::new(smoothing_length),
-            },
-
+        ConstantFluidProperties {
             smoothing_length,
             particle_density,
             fluid_density,
-
-            gravity: Vector::new(0.0, -9.81),
-
-            boundary_changed: true,
         }
     }
 
@@ -142,6 +123,40 @@ impl FluidParticleWorld {
     pub fn suggested_particle_render_radius(&self) -> Real {
         Self::particle_radius_from_particle_density(self.particle_density)
     }
+}
+
+pub struct FluidParticleWorld {
+    pub particles: Particles,
+    pub properties: ConstantFluidProperties,
+
+    pub gravity: Vector, // global gravity force in m/s² (== N/kg)
+
+    boundary_changed: bool,
+}
+impl FluidParticleWorld {
+    pub fn new(
+        smoothing_factor: Real,
+        particle_density: Real, // #particles/m² for resting fluid
+        fluid_density: Real,    // kg/m² for the resting fluid
+    ) -> FluidParticleWorld {
+        let properties = ConstantFluidProperties::new(smoothing_factor, particle_density, fluid_density);
+        FluidParticleWorld {
+            particles: Particles {
+                positions: Vec::new(),
+                velocities: Vec::new(),
+                densities: Vec::new(),
+
+                boundary_particles: Vec::new(),
+
+                neighborhood: NeighborhoodSearch::new(properties.smoothing_length()),
+            },
+            properties,
+
+            gravity: Vector::new(0.0, -9.81),
+
+            boundary_changed: true,
+        }
+    }
 
     pub fn remove_all_fluid_particles(&mut self) {
         self.particles.positions.clear();
@@ -158,7 +173,7 @@ impl FluidParticleWorld {
     /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
     pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: Real) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis
-        let num_particles_per_meter = self.num_particles_per_meter();
+        let num_particles_per_meter = self.properties.num_particles_per_meter();
         let num_particles_x = std::cmp::max(1, (fluid_rect.w as Real * num_particles_per_meter) as usize);
         let num_particles_y = std::cmp::max(1, (fluid_rect.h as Real * num_particles_per_meter) as usize);
         let num_particles = num_particles_x * num_particles_y;
@@ -188,7 +203,7 @@ impl FluidParticleWorld {
 
     pub fn add_boundary_line(&mut self, start: Point, end: Point) {
         let distance = start.distance2(end);
-        let num_particles_per_meter = self.num_particles_per_meter();
+        let num_particles_per_meter = self.properties.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.particles.boundary_particles.reserve(num_shadow_particles);
         let step = (end - start) / (num_shadow_particles as Real);
@@ -206,11 +221,11 @@ impl FluidParticleWorld {
         microprofile::scope!("FluidParticleWorld", "update_densities");
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
-        let mass = self.particle_mass();
+        let mass = self.properties.particle_mass();
 
         // Density contributions are symmetric, but that is hard to use in a parallel loop.
         let neighborhood = &self.particles.neighborhood;
-        let smoothing_length_sq = self.smoothing_length * self.smoothing_length;
+        let smoothing_length_sq = self.properties.smoothing_length * self.properties.smoothing_length;
         let boundary_particles = &self.particles.boundary_particles;
         let positions = &self.particles.positions;
 

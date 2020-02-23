@@ -52,15 +52,15 @@ impl MainState {
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         Self::reset_fluid(&mut fluid_world);
-        let xsph = XSPHViscosityModel::new(fluid_world.smoothing_length());
+        let xsph = XSPHViscosityModel::new(fluid_world.properties.smoothing_length());
         //xsph.epsilon = 0.1;
-        let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.smoothing_length());
+        let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
 
         //let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
-        let sph_solver = DFSPHSolver::new(xsph, fluid_world.smoothing_length());
+        let sph_solver = DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
 
-        let particle_radius = fluid_world.suggested_particle_render_radius();
+        let particle_radius = fluid_world.properties.suggested_particle_render_radius();
         let particle_mesh = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),

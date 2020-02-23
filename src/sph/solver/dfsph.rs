@@ -54,8 +54,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld, kernel: impl Kernel + std::marker::Sync) {
         microprofile::scope!("DFSPHSolver", "compute_alpha_factors");
         const EPSILON: Real = 1e-6;
-        let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
-        let particle_mass = fluid_world.particle_mass();
+        let smoothing_length_sq = fluid_world.properties.smoothing_length() * fluid_world.properties.smoothing_length();
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
         alpha_values
             .par_iter_mut()
             .zip(fluid_world.particles.positions.par_iter())
@@ -64,7 +65,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum = Vector::zero();
 
-                fluid_world.particles.foreach_neighbor_particle(
+                particles.foreach_neighbor_particle(
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
@@ -74,7 +75,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         gradient_square_sum += grad_ij.magnitude2();
                     },
                 );
-                fluid_world.particles.foreach_neighbor_particle_boundary(
+                particles.foreach_neighbor_particle_boundary(
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
@@ -92,12 +93,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     fn predict_densities(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         microprofile::scope!("DFSPHSolver", "predict_densities");
-        let smoothing_length = fluid_world.smoothing_length();
+        let smoothing_length = fluid_world.properties.smoothing_length();
         let smoothing_length_sq = smoothing_length * smoothing_length;
-        let particle_mass = fluid_world.particle_mass();
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
         let predicted_velocities = &self.predicted_velocities;
         let kernel = &self.kernel;
-        let reference_density = fluid_world.fluid_density();
+        let reference_density = fluid_world.properties.fluid_density();
         self.predicted_densities
             .par_iter_mut()
             .zip(fluid_world.particles.densities.par_iter())
@@ -105,7 +107,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             .for_each(|((predicted_densitiy, &original_density), (&ri, &predicted_vi))| {
                 let mut delta = 0.0; // gradient to self is zero.
 
-                fluid_world.particles.foreach_neighbor_particle(
+                particles.foreach_neighbor_particle(
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
@@ -114,7 +116,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         delta += delta_v.dot(kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
                     },
                 );
-                fluid_world.particles.foreach_neighbor_particle_boundary(
+                particles.foreach_neighbor_particle_boundary(
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
@@ -132,12 +134,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     fn update_velocity_prediction(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         microprofile::scope!("DFSPHSolver", "update_velocity_prediction");
-        let smoothing_length = fluid_world.smoothing_length();
+        let smoothing_length = fluid_world.properties.smoothing_length();
         let smoothing_length_sq = smoothing_length * smoothing_length;
-        let particle_mass = fluid_world.particle_mass();
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
         let predicted_densities = &self.predicted_densities;
         let alpha_values = &self.alpha_values;
-        let reference_density = fluid_world.fluid_density();
+        let reference_density = fluid_world.properties.fluid_density();
         let inv_dt = 1.0 / dt;
         let kernel = &self.kernel;
 
@@ -148,18 +151,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             // compared to k values in paper already divided with density
             // collapsing divition of dt² with multiply later -> divide delta with dt
 
-            fluid_world.particles.foreach_neighbor_particle(
+            particles.foreach_neighbor_particle(
                 smoothing_length_sq,
-                fluid_world.particles.positions[i],
+                particles.positions[i],
                 #[inline(always)]
                 |j, r_sq, ri_to_rj| {
                     let kj = (predicted_densities[j] - reference_density) * alpha_values[j];
                     delta += (ki + kj) * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
                 },
             );
-            fluid_world.particles.foreach_neighbor_particle_boundary(
+            particles.foreach_neighbor_particle_boundary(
                 smoothing_length_sq,
-                fluid_world.particles.positions[i],
+                particles.positions[i],
                 #[inline(always)]
                 |r_sq, ri_to_rj| {
                     // compared to k values in paper already divided with density and multiplied with dt²!
@@ -186,10 +189,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             let average_density: Real = self.predicted_densities.par_iter().sum::<Real>() / self.predicted_densities.len() as Real;
             assert!(average_density.is_finite());
-            let density_error = (average_density - fluid_world.fluid_density()).abs();
+            let density_error = (average_density - fluid_world.properties.fluid_density()).abs();
 
             // error is expressed relative to fluid density and time!
-            if density_error < self.max_density_error / dt * fluid_world.fluid_density() {
+            if density_error < self.max_density_error / dt * fluid_world.properties.fluid_density() {
                 // println!(
                 //     "density error correction succeeded after {} steps. Density error was {}.",
                 //     num_iter, density_error
@@ -201,7 +204,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     "density error canceled after {} steps. Density error was {}, that is {}%.",
                     num_iter,
                     density_error,
-                    density_error / fluid_world.fluid_density() / 100.0
+                    density_error / fluid_world.properties.fluid_density() / 100.0
                 );
                 break;
             }
@@ -233,7 +236,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         }
 
         // compute non-pressure forces (from scratch)
-        let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.particle_mass();
+        let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.properties.particle_mass();
 
         // (optional) adapt timestep using CFL condition
         // todo
@@ -242,20 +245,22 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         {
             microprofile::scope!("DFSPHSolver", "velocity prediction");
 
-            let particle_mass = fluid_world.particle_mass();
+            let particles = &fluid_world.particles;
+            let particle_mass = fluid_world.properties.particle_mass();
+            let smoothing_length = fluid_world.properties.smoothing_length();
             let viscosity_model = &self.viscosity_model;
             let force_to_particle_velocitychange = dt / particle_mass;
             let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
             self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-                let vi = fluid_world.particles.velocities[i];
+                let vi = particles.velocities[i];
 
                 // forces
                 *predicted_velocity = non_pressure_velocitychange + vi;
 
                 // viscosity
-                fluid_world.particles.foreach_neighbor_particle(
-                    fluid_world.smoothing_length(),
-                    fluid_world.particles.positions[i],
+                particles.foreach_neighbor_particle(
+                    smoothing_length,
+                    particles.positions[i],
                     #[inline(always)]
                     |j, r_sq, _ri_to_rj| {
                         *predicted_velocity += dt
@@ -264,8 +269,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                                 r_sq,
                                 r_sq.sqrt(),
                                 particle_mass,
-                                fluid_world.particles.densities[j],
-                                fluid_world.particles.velocities[j] - vi,
+                                particles.densities[j],
+                                particles.velocities[j] - vi,
                             );
                     },
                 );

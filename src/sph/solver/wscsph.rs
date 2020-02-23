@@ -40,35 +40,37 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 
     fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
         microprofile::scope!("WCSPHSolver", "update_accellerations");
-        let mass = fluid_world.particle_mass();
+        let mass = fluid_world.properties.particle_mass();
 
         // pressure & viscosity forces
         // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
         // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
 
-        let smoothing_length_sq = fluid_world.smoothing_length() * fluid_world.smoothing_length();
-        let fluid_density = fluid_world.fluid_density();
+        let smoothing_length_sq = fluid_world.properties.smoothing_length() * fluid_world.properties.smoothing_length();
+        let fluid_density = fluid_world.properties.fluid_density();
+        let particles = &fluid_world.particles;
         let pressure_kernel = self.pressure_kernel;
         let boundary_force_factor = self.boundary_force_factor;
         let viscosity_model = &self.viscosity_model;
+        let gravity = fluid_world.gravity;
 
         self.accellerations
             .par_iter_mut()
             .zip(fluid_world.particles.velocities.par_iter())
             .zip(fluid_world.particles.positions.par_iter().zip(fluid_world.particles.densities.par_iter()))
             .for_each(|((accelleration, &vi), (&ri, &rhoi))| {
-                *accelleration = fluid_world.gravity;
+                *accelleration = gravity;
 
                 let pi = Self::pressure(fluid_density, rhoi);
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
                 Particles::foreach_neighbor_particle(
-                    &fluid_world.particles,
+                    &particles,
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
                     |j, r_sq, ri_to_rj| {
-                        let rhoj = fluid_world.particles.densities[j];
+                        let rhoj = particles.densities[j];
                         let pj = Self::pressure(fluid_density, rhoj);
                         let r = r_sq.sqrt();
 
@@ -79,7 +81,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                         *accelleration += pressure_unsmoothed * pressure_kernel.gradient(ri_to_rj, r_sq, r);
 
                         *accelleration +=
-                            viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, fluid_world.particles.velocities[j] - vi);
+                            viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, particles.velocities[j] - vi);
                     },
                 );
 
@@ -87,7 +89,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 // "SPH particle boundary forces for arbitrary boundaries" by Monaghan and Kajtar 2009
                 // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
                 // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
-                fluid_world.particles.foreach_neighbor_particle_boundary(
+                particles.foreach_neighbor_particle_boundary(
                     smoothing_length_sq,
                     ri,
                     #[inline(always)]
