@@ -6,12 +6,6 @@ pub type ParticleIndex = u32;
 pub type CellIndex = u32;
 
 #[derive(Copy, Clone)]
-struct Particle {
-    pidx: ParticleIndex,
-    cidx: CellIndex,
-}
-
-#[derive(Copy, Clone)]
 struct CellPos {
     x: u16,
     y: u16,
@@ -66,8 +60,9 @@ impl PointSet {
         }
         std::mem::swap(scratch_buffer, buffer_to_sort);
     }
-    
+
     // note: Applying sorting is a bit costly and only solvers know which attributes are discarded/recomputed and which need the new sorting applied.
+    // todo: parallize things
     pub fn update(
         &mut self,
         scratch_buffers: &mut ScratchBufferStore,
@@ -99,10 +94,36 @@ impl PointSet {
                     break;
                 }
             }
+
+            // Version with memcpy instead of swaps (significantly slower in benchmarks - probably not compiler friendly)
+            // let mut j = i;
+            // while j > 0 && self.cell_indices[j - 1] > cidx {
+            //     j -= 1;
+            // }
+            // if i != j {
+            //     unsafe {
+            //         core::ptr::copy(self.cell_indices.as_ptr().add(j), self.cell_indices.as_mut_ptr().add(j + 1), i - j);
+            //     }
+            //     unsafe {
+            //         core::ptr::copy(
+            //             self.particle_indices.as_ptr().add(j),
+            //             self.particle_indices.as_mut_ptr().add(j + 1),
+            //             i - j,
+            //         );
+            //     }
+            //     // safe version:
+            //     self.cell_indices.copy_within(j..i, j + 1);
+            //     //self.particle_indices.copy_within(j..i, j + 1);
+            // }
+            // self.cell_indices[j] = cidx;
+            // self.particle_indices[j] = i as ParticleIndex;
         }
         //println!("num swaps {}", num_swaps);
 
-        self.cells.push(Cell { first_particle: positions.len(), cidx: CellIndex::max_value(), }); // sentinel cell
+        self.cells.push(Cell {
+            first_particle: positions.len(),
+            cidx: CellIndex::max_value(),
+        }); // sentinel cell
 
         // Apply sorting.
         {
@@ -125,17 +146,13 @@ impl PointSet {
             }
         }
 
-        
-        // create cells. Todo: Parallize by doing a prefix sum first
+        // create cells.
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
         let mut prev_cidx = CellIndex::max_value();
         for (pidx, &cidx) in self.cell_indices.iter().enumerate() {
             if cidx != prev_cidx {
-                self.cells.push(Cell {
-                    first_particle: pidx,
-                    cidx,
-                });
+                self.cells.push(Cell { first_particle: pidx, cidx });
                 prev_cidx = cidx;
             }
         }
