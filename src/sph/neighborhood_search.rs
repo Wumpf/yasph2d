@@ -25,7 +25,7 @@ impl CellPos {
 
 #[derive(Copy, Clone)]
 struct Cell {
-    first_particle: ParticleIndex,
+    first_particle: usize,
     cidx: CellIndex,
 }
 
@@ -52,20 +52,21 @@ impl GridProperties {
 
 #[derive(Default)]
 struct PointSet {
-    particles: Vec<Particle>, // TODO: Remove, make this temp, take it apart
+    cell_indices: Vec<CellIndex>,
+    particle_indices: Vec<ParticleIndex>, // TODO: Remove, make this temp
     cells: Vec<Cell>,
 }
 
 impl PointSet {
-    fn apply_sorting<T: Copy>(&self, scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
+    fn apply_sorting<T: Copy>(sorting: &[ParticleIndex], scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
         assert_eq!(scratch_buffer.len(), buffer_to_sort.len());
-        assert_eq!(self.particles.len(), buffer_to_sort.len());
-        for (pos, p) in scratch_buffer.iter_mut().zip(self.particles.iter()) {
-            *pos = buffer_to_sort[p.pidx as usize];
+        assert_eq!(sorting.len(), buffer_to_sort.len());
+        for (pos, &i) in scratch_buffer.iter_mut().zip(sorting.iter()) {
+            *pos = buffer_to_sort[i as usize];
         }
         std::mem::swap(scratch_buffer, buffer_to_sort);
     }
-
+    
     // note: Applying sorting is a bit costly and only solvers know which attributes are discarded/recomputed and which need the new sorting applied.
     pub fn update(
         &mut self,
@@ -75,67 +76,71 @@ impl PointSet {
         particle_attributes_vector: &mut Vec<&mut Vec<Vector>>,
         particle_attributes_real: &mut Vec<&mut Vec<Real>>,
     ) {
-        //, attribute_sort_callback: impl Fn(&[Particle]) -> ()) {
-        // Adjust size. (not paralized since expected to be small)
-        match self.particles.len().cmp(&positions.len()) {
-            std::cmp::Ordering::Greater => {
-                unimplemented!("Removing particles not impemented yet");
-            }
-            std::cmp::Ordering::Less => {
-                self.particles.reserve(positions.len());
-                for new_pidx in self.particles.len()..positions.len() {
-                    self.particles.push(Particle {
-                        pidx: new_pidx as ParticleIndex,
-                        cidx: 0,
-                    }); // todo: compute added particles on the spot and leave out later?
+        // we know that most particles have not changed since last frame
+        // -> use insertion sort and building permutation array into it as well!
+        // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
+        // ... just a bit harder to parallize this way.
+        self.cell_indices.resize(positions.len(), 0);
+        self.particle_indices.resize(positions.len(), 0);
+        self.cells.clear();
+
+        //let mut num_swaps = 0;
+        for (i, &pos) in positions.iter().enumerate() {
+            let cidx = grid.position_to_cidx(pos);
+
+            self.particle_indices[i] = i as ParticleIndex;
+            self.cell_indices[i] = cidx;
+
+            for j in (0..i).rev() {
+                if self.cell_indices[j] > self.cell_indices[j + 1] {
+                    self.cell_indices.swap(j, j + 1);
+                    self.particle_indices.swap(j, j + 1);
+                } else {
+                    break;
                 }
             }
-            std::cmp::Ordering::Equal => (),
         }
+        //println!("num swaps {}", num_swaps);
 
-        // Update cell indices. Todo: Parallize
-        for p in self.particles.iter_mut() {
-            p.cidx = grid.position_to_cidx(positions[p.pidx as usize]);
-        }
-
-        // Sort by cell index. Todo: Parallize
-        self.particles.sort_unstable_by_key(|a| a.cidx);
+        self.cells.push(Cell { first_particle: positions.len(), cidx: CellIndex::max_value(), }); // sentinel cell
 
         // Apply sorting.
         {
             microprofile::scope!("NeighborhoodSearch", "apply sorting");
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_point(positions.len());
-                self.apply_sorting(&mut scratch_buffer.buffer, positions);
+                Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, positions);
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_vector(positions.len());
                 for attribute_buffer in particle_attributes_vector.iter_mut() {
-                    self.apply_sorting(&mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_real(positions.len());
                 for attribute_buffer in particle_attributes_real.iter_mut() {
-                    self.apply_sorting(&mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
         }
 
+        
         // create cells. Todo: Parallize by doing a prefix sum first
+        // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
         let mut prev_cidx = CellIndex::max_value();
-        for (pidx, p) in self.particles.iter().enumerate() {
-            if p.cidx != prev_cidx {
+        for (pidx, &cidx) in self.cell_indices.iter().enumerate() {
+            if cidx != prev_cidx {
                 self.cells.push(Cell {
-                    first_particle: pidx as ParticleIndex,
-                    cidx: p.cidx,
+                    first_particle: pidx,
+                    cidx,
                 });
-                prev_cidx = p.cidx;
+                prev_cidx = cidx;
             }
         }
         self.cells.push(Cell {
-            first_particle: self.particles.len() as ParticleIndex,
+            first_particle: positions.len(),
             cidx: CellIndex::max_value(),
         }); // sentinel cell
     }
@@ -212,7 +217,7 @@ impl PointSet {
 
             // Consume particles.
             for p in first_particle..last_particle {
-                f(p);
+                f(p as ParticleIndex);
             }
 
             // We know current cell isn't in the rect, so skip it.
