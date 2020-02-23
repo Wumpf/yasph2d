@@ -16,7 +16,7 @@ use microprofile;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("YaSPH2D", "AndreasR")
-        .window_setup(conf::WindowSetup::default().title("YaSPH2D").samples(conf::NumSamples::Eight))
+        .window_setup(conf::WindowSetup::default().title("YaSPH2D").samples(conf::NumSamples::Eight).vsync(false))
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
     let (ctx, event_loop) = &mut context_builder.build()?;
     let state = &mut MainState::new(ctx);
@@ -57,7 +57,7 @@ impl MainState {
         let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
 
-        //let sph_solver = WCSPHSolver::new(xsph, fluid_world.smoothing_length());
+        //let sph_solver = WCSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
         let sph_solver = DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
 
         let particle_radius = fluid_world.properties.suggested_particle_render_radius();
