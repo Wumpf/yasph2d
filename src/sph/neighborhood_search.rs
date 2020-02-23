@@ -68,8 +68,8 @@ impl PointSet {
         scratch_buffers: &mut ScratchBufferStore,
         grid: &GridProperties,
         positions: &mut Vec<Point>,
-        particle_attributes_vector: &mut Vec<&mut Vec<Vector>>,
-        particle_attributes_real: &mut Vec<&mut Vec<Real>>,
+        particle_attributes_vector: &mut [&mut Vec<Vector>],
+        particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
         // we know that most particles have not changed since last frame
         // -> use insertion sort and building permutation array into it as well!
@@ -79,7 +79,6 @@ impl PointSet {
         self.particle_indices.resize(positions.len(), 0);
         self.cells.clear();
 
-        //let mut num_swaps = 0;
         for (i, &pos) in positions.iter().enumerate() {
             let cidx = grid.position_to_cidx(pos);
 
@@ -112,13 +111,12 @@ impl PointSet {
             //         );
             //     }
             //     // safe version:
-            //     self.cell_indices.copy_within(j..i, j + 1);
+            //     //self.cell_indices.copy_within(j..i, j + 1);
             //     //self.particle_indices.copy_within(j..i, j + 1);
             // }
             // self.cell_indices[j] = cidx;
             // self.particle_indices[j] = i as ParticleIndex;
         }
-        //println!("num swaps {}", num_swaps);
 
         self.cells.push(Cell {
             first_particle: positions.len(),
@@ -282,15 +280,15 @@ impl NeighborhoodSearch {
     pub fn update_boundary(&mut self, scratch_buffers: &mut ScratchBufferStore, positions: &mut Vec<Point>) {
         microprofile::scope!("NeighborhoodSearch", "update_boundary");
         self.boundary_particles
-            .update(scratch_buffers, &self.grid, positions, &mut Vec::new(), &mut Vec::new());
+            .update(scratch_buffers, &self.grid, positions, &mut [], &mut []);
     }
 
     pub fn update(
         &mut self,
         scratch_buffers: &mut ScratchBufferStore,
         positions: &mut Vec<Point>,
-        particle_attributes_vector: &mut Vec<&mut Vec<Vector>>,
-        particle_attributes_real: &mut Vec<&mut Vec<Real>>,
+        particle_attributes_vector: &mut [&mut Vec<Vector>],
+        particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
         microprofile::scope!("NeighborhoodSearch", "update");
         self.dynamic_particles.update(

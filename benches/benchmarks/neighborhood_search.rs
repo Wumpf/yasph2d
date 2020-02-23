@@ -2,8 +2,8 @@ use cgmath::prelude::*;
 use criterion::{black_box, criterion_group, Criterion};
 use rand::prelude::*;
 
-use yasph2d::sph::scratch_buffer::ScratchBufferStore;
 use yasph2d::sph::neighborhood_search::NeighborhoodSearch;
+use yasph2d::sph::scratch_buffer::ScratchBufferStore;
 use yasph2d::units::*;
 
 fn bench_neighborhood_search(c: &mut Criterion) {
@@ -18,14 +18,14 @@ fn bench_neighborhood_search(c: &mut Criterion) {
 
     let mut scratch_buffer_store = ScratchBufferStore::new();
     let mut searcher = NeighborhoodSearch::new(search_radius);
-    searcher.update(&mut scratch_buffer_store, &mut positions, &mut Vec::new(), &mut Vec::new());
+    searcher.update(&mut scratch_buffer_store, &mut positions, &mut [], &mut []);
 
     c.bench_function(
         &format!(
             "neighborhood_search.update (warm), {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
-        |b| b.iter(|| searcher.update(&mut scratch_buffer_store, &mut positions, &mut Vec::new(), &mut Vec::new())),
+        |b| b.iter(|| searcher.update(&mut scratch_buffer_store, &mut positions, &mut [], &mut [])),
     );
 
     c.bench_function(
