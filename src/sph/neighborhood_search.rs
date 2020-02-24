@@ -308,3 +308,39 @@ impl NeighborhoodSearch {
         self.boundary_particles.foreach_potential_neighbor(&self.grid, position, f)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::prelude::*;
+    use rand::prelude::*;
+
+    #[test]
+    fn potential_neighbors_contains_neighbors() {
+        const NUM_POSITIONS: usize = 1000;
+        const DENSITY: Real = 10.0;
+        const SEARCH_RADIUS: Real = 1.0;
+
+        let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(123456789);
+        let mut positions: Vec<Point> = std::iter::repeat_with(|| Point::from_vec(rng.gen::<Vector>() * (NUM_POSITIONS as Real / DENSITY).sqrt()))
+            .take(NUM_POSITIONS)
+            .collect();
+
+        let mut scratch_buffer_store = ScratchBufferStore::new();
+        let mut searcher = NeighborhoodSearch::new(SEARCH_RADIUS);
+        searcher.update(&mut scratch_buffer_store, &mut positions, &mut [], &mut []);
+
+        for &search_pos in positions.iter() {
+            let mut potential_neighbors = Vec::new();
+            searcher.foreach_potential_neighbor(search_pos, |p| potential_neighbors.push(p));
+
+            // validate
+            for (i, &p) in positions.iter().enumerate() {
+                if p.distance2(search_pos) <= SEARCH_RADIUS*SEARCH_RADIUS {
+                    assert!(potential_neighbors.contains(&(i as ParticleIndex)));
+                }
+            }
+        }
+    }
+}
