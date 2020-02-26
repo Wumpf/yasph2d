@@ -1,6 +1,7 @@
+use super::scratch_buffer::ScratchBufferStore;
 use crate::units::*;
 
-use super::scratch_buffer::ScratchBufferStore;
+use cgmath::prelude::*;
 
 pub type ParticleIndex = u32;
 pub type CellIndex = u32;
@@ -14,6 +15,14 @@ impl CellPos {
     #[inline]
     fn to_cidx(self) -> CellIndex {
         super::morton::encode(self.x, self.y)
+    }
+
+    #[inline]
+    fn from_cidx(cidx: CellIndex) -> CellPos {
+        CellPos {
+            x: super::morton::decode_x(cidx) as u16,
+            y: super::morton::decode_y(cidx) as u16,
+        }
     }
 }
 
@@ -46,7 +55,6 @@ impl GridProperties {
 
 #[derive(Default)]
 struct CellGrid {
-    particle_cell_indices: Vec<CellIndex>,
     cells: Vec<Cell>,
 }
 
@@ -70,9 +78,10 @@ impl CellGrid {
         particle_attributes_vector: &mut [&mut Vec<Vector>],
         particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
-        let particle_indices_scratch_buffer = &mut scratch_buffers.get_buffer_uint(positions.len());
-        let particle_indices = &mut particle_indices_scratch_buffer.buffer;
-        self.particle_cell_indices.resize(positions.len(), 0);
+        microprofile::scope!("NeighborhoodSearch", "CellGrid::update");
+
+        let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
+        let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
 
         // we know that most particles have not changed since last frame
         // -> use insertion sort and building permutation array into it as well!
@@ -81,13 +90,13 @@ impl CellGrid {
         for (i, &pos) in positions.iter().enumerate() {
             let cidx = grid.position_to_cidx(pos);
 
-            particle_indices[i] = i as ParticleIndex;
-            self.particle_cell_indices[i] = cidx;
+            particle_indices.buffer[i] = i as ParticleIndex;
+            cell_indices.buffer[i] = cidx;
 
             for j in (0..i).rev() {
-                if self.particle_cell_indices[j] > self.particle_cell_indices[j + 1] {
-                    self.particle_cell_indices.swap(j, j + 1);
-                    particle_indices.swap(j, j + 1);
+                if cell_indices.buffer[j] > cell_indices.buffer[j + 1] {
+                    cell_indices.buffer.swap(j, j + 1);
+                    particle_indices.buffer.swap(j, j + 1);
                 } else {
                     break;
                 }
@@ -95,46 +104,45 @@ impl CellGrid {
 
             // Version with memcpy instead of swaps (significantly slower in benchmarks - probably not compiler friendly)
             // let mut j = i;
-            // while j > 0 && self.particle_cell_indices[j - 1] > cidx {
+            // while j > 0 && cell_indices.buffer[j - 1] > cidx {
             //     j -= 1;
             // }
             // if i != j {
             //     unsafe {
-            //         core::ptr::copy(self.particle_cell_indices.as_ptr().add(j), self.particle_cell_indices.as_mut_ptr().add(j + 1), i - j);
+            //         core::ptr::copy(cell_indices.buffer.as_ptr().add(j), cell_indices.buffer.as_mut_ptr().add(j + 1), i - j);
             //     }
             //     unsafe {
             //         core::ptr::copy(
-            //             self.particle_indices.as_ptr().add(j),
-            //             self.particle_indices.as_mut_ptr().add(j + 1),
+            //             self.indices.buffer.as_ptr().add(j),
+            //             self.indices.buffer.as_mut_ptr().add(j + 1),
             //             i - j,
             //         );
             //     }
             //     // safe version:
-            //     //self.particle_cell_indices.copy_within(j..i, j + 1);
-            //     //self.particle_indices.copy_within(j..i, j + 1);
+            //     //cell_indices.buffer.copy_within(j..i, j + 1);
+            //     //self.indices.buffer.copy_within(j..i, j + 1);
             // }
-            // self.particle_cell_indices[j] = cidx;
-            // self.particle_indices[j] = i as ParticleIndex;
+            // cell_indices.buffer[j] = cidx;
+            // self.indices.buffer[j] = i as ParticleIndex;
         }
-
 
         // Apply sorting.
         {
             microprofile::scope!("NeighborhoodSearch", "apply sorting");
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_point(positions.len());
-                Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, positions);
+                Self::apply_sorting(&particle_indices.buffer, &mut scratch_buffer.buffer, positions);
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_vector(positions.len());
                 for attribute_buffer in particle_attributes_vector.iter_mut() {
-                    Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&particle_indices.buffer, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_real(positions.len());
                 for attribute_buffer in particle_attributes_real.iter_mut() {
-                    Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&particle_indices.buffer, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
         }
@@ -143,7 +151,7 @@ impl CellGrid {
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
         let mut prev_cidx = CellIndex::max_value();
-        for (pidx, &cidx) in self.particle_cell_indices.iter().enumerate() {
+        for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
             if cidx != prev_cidx {
                 self.cells.push(Cell { first_particle: pidx, cidx });
                 prev_cidx = cidx;
@@ -178,11 +186,9 @@ impl CellGrid {
         max
     }
 
-    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(ParticleIndex) -> ()) {
-        let cidx_min = grid.position_to_cidx(position - Vector::new(grid.radius, grid.radius));
+    pub fn foreach_particle_in_cell_box(&self, cidx_min: CellIndex, cidx_max: CellIndex, mut f: impl FnMut(usize) -> ()) {
         let cidx_min_xbits = cidx_min & super::morton::MORTON_XBITS;
         let cidx_min_ybits = cidx_min & super::morton::MORTON_YBITS;
-        let cidx_max = grid.position_to_cidx(position + Vector::new(grid.radius, grid.radius));
         let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
         let cidx_max_ybits = cidx_max & super::morton::MORTON_YBITS;
 
@@ -227,7 +233,7 @@ impl CellGrid {
 
             // Consume particles.
             for p in first_particle..last_particle {
-                f(p as ParticleIndex);
+                f(p);
             }
 
             // We know current cell isn't in the rect, so skip it.
@@ -238,13 +244,87 @@ impl CellGrid {
             cell = self.cells[cell_arrayidx];
         }
     }
+
+    fn get_cell_neighborbox(cidx: CellIndex) -> (CellIndex, CellIndex) {
+        let pos = CellPos::from_cidx(cidx);
+        let min = CellPos { x: pos.x - 1, y: pos.y - 1 };
+        let max = CellPos { x: pos.x + 1, y: pos.y + 1 };
+        (min.to_cidx(), max.to_cidx())
+    }
+
+    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, f: impl FnMut(usize) -> ()) {
+        let cidx_min = grid.position_to_cidx(position - Vector::new(grid.radius, grid.radius));
+        let cidx_max = grid.position_to_cidx(position + Vector::new(grid.radius, grid.radius));
+        self.foreach_particle_in_cell_box(cidx_min, cidx_max, f);
+    }
+}
+
+#[derive(Default)]
+pub struct NeighborLists {
+    neighborhood_list_starts: Vec<u32>,
+    neighborhood_lists: Vec<ParticleIndex>,
+}
+
+impl NeighborLists {
+    fn update(&mut self, grid: &GridProperties, positions: &[Point], cell_grid: &CellGrid) {
+        microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
+        assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
+
+        self.neighborhood_list_starts.resize(positions.len() + 1, 0);
+        self.neighborhood_lists.clear();
+        let radius_sq = grid.radius * grid.radius;
+        let mut local_neighbor_sets: Vec<Vec<ParticleIndex>> = Vec::new(); // todo: don't realloc those?
+
+        for cell_slice in cell_grid.cells.windows(2) {
+            let current_cell = cell_slice[0];
+            let next_cell = cell_slice[1];
+            let num_particles_in_cell = next_cell.first_particle - current_cell.first_particle;
+
+            for neighbor_set in local_neighbor_sets.iter_mut() {
+                neighbor_set.clear();
+            }
+            local_neighbor_sets.resize_with(num_particles_in_cell, || Vec::<ParticleIndex>::with_capacity(100)); // todo: what's a good capacity value?
+
+            let (cidx_min, cidx_max) = CellGrid::get_cell_neighborbox(current_cell.cidx);
+
+            cell_grid.foreach_particle_in_cell_box(cidx_min, cidx_max, |neighbor_pidx| {
+                for pidx in current_cell.first_particle..next_cell.first_particle {
+                    if pidx != neighbor_pidx && positions[pidx].distance2(positions[neighbor_pidx]) <= radius_sq {
+                        local_neighbor_sets[pidx - current_cell.first_particle].push(neighbor_pidx as ParticleIndex);
+                    }
+                }
+            });
+
+            // write out neighbors.
+            // todo: compress
+            for pidx in current_cell.first_particle..next_cell.first_particle {
+                self.neighborhood_list_starts[pidx] = self.neighborhood_lists.len() as u32;
+                self.neighborhood_lists
+                    .extend_from_slice(&local_neighbor_sets[pidx - current_cell.first_particle]);
+            }
+        }
+        *self.neighborhood_list_starts.last_mut().unwrap() = self.neighborhood_lists.len() as u32;
+    }
+
+    #[inline]
+    pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex) -> ()) {
+        let first = self.neighborhood_list_starts[particle as usize] as usize;
+        let last = self.neighborhood_list_starts[particle as usize + 1] as usize;
+        for i in first..last {
+            f(unsafe { *self.neighborhood_lists.get_unchecked(i) });
+        }
+    }
 }
 
 pub struct NeighborhoodSearch {
     grid: GridProperties,
 
-    dynamic_particles: CellGrid,
-    boundary_particles: CellGrid,
+    // todo: Erase boundary/particle knowledge and just work with registered point sets.
+    cellgrid_particles: CellGrid,
+    cellgrid_boundary: CellGrid,
+
+    particle_particle_neighbors: NeighborLists,
+    particle_boundary_neighbors: NeighborLists,
 }
 
 impl NeighborhoodSearch {
@@ -254,9 +334,9 @@ impl NeighborhoodSearch {
     ) -> NeighborhoodSearch {
         let cell_size = radius * 2.0; // todo: experiment with larger cells
 
-        //const INDICES_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
+        //const particle_INDICES.buffer_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
         //let mut num_expected_in_cell = (cell_size * cell_size * expected_max_density + 0.5) as u32;
-        //num_expected_in_cell = (num_expected_in_cell + INDICES_PER_CACHELINE-1) / INDICES_PER_CACHELINE * INDICES_PER_CACHELINE;
+        //num_expected_in_cell = (num_expected_in_cell + particle_INDICES.buffer_PER_CACHELINE-1) / particle_INDICES.buffer_PER_CACHELINE * particle_INDICES.buffer_PER_CACHELINE;
 
         NeighborhoodSearch {
             grid: GridProperties {
@@ -266,44 +346,58 @@ impl NeighborhoodSearch {
                 // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
                 grid_min: Point::new(-100.0, -100.0),
             },
-            dynamic_particles: Default::default(),
-            boundary_particles: Default::default(),
+
+            cellgrid_particles: Default::default(),
+            cellgrid_boundary: Default::default(),
+
+            particle_particle_neighbors: NeighborLists::default(),
+            particle_boundary_neighbors: NeighborLists::default(),
         }
     }
 
     // todo: allow boundaries to have properties
     pub fn update_boundary(&mut self, scratch_buffers: &mut ScratchBufferStore, positions: &mut Vec<Point>) {
         microprofile::scope!("NeighborhoodSearch", "update_boundary");
-        self.boundary_particles
-            .update(scratch_buffers, &self.grid, positions, &mut [], &mut []);
+        self.cellgrid_boundary.update(scratch_buffers, &self.grid, positions, &mut [], &mut []);
     }
 
-    pub fn update(
+    pub fn update_particle_neighbors(
         &mut self,
         scratch_buffers: &mut ScratchBufferStore,
-        positions: &mut Vec<Point>,
+        particle_positions: &mut Vec<Point>,
         particle_attributes_vector: &mut [&mut Vec<Vector>],
         particle_attributes_real: &mut [&mut Vec<Real>],
+        boundary_positions: &[Point],
     ) {
-        microprofile::scope!("NeighborhoodSearch", "update");
-        self.dynamic_particles.update(
+        microprofile::scope!("NeighborhoodSearch", "update_particle_neighbors");
+        self.cellgrid_particles.update(
             scratch_buffers,
             &self.grid,
-            positions,
+            particle_positions,
             particle_attributes_vector,
             particle_attributes_real,
         );
+        self.particle_particle_neighbors
+            .update(&self.grid, particle_positions, &self.cellgrid_particles);
+        // if !boundary_positions.is_empty() {
+        //     self.particle_boundary_neighbors
+        //         .update(&self.grid, particle_positions, &self.cellgrid_boundary, boundary_positions);
+        // }
     }
 
-    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(ParticleIndex) -> ()) {
-        self.dynamic_particles.foreach_potential_neighbor(&self.grid, position, f)
+    #[inline]
+    pub fn foreach_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        self.particle_particle_neighbors.foreach_neighbor(particle, f);
     }
 
-    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(ParticleIndex) -> ()) {
-        self.boundary_particles.foreach_potential_neighbor(&self.grid, position, f)
+    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {
+        self.cellgrid_particles.foreach_potential_neighbor(&self.grid, position, f)
+    }
+
+    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {
+        self.cellgrid_boundary.foreach_potential_neighbor(&self.grid, position, f)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -324,7 +418,7 @@ mod tests {
 
         let mut scratch_buffer_store = ScratchBufferStore::new();
         let mut searcher = NeighborhoodSearch::new(SEARCH_RADIUS);
-        searcher.update(&mut scratch_buffer_store, &mut positions, &mut [], &mut []);
+        searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
 
         for &search_pos in positions.iter() {
             let mut potential_neighbors = Vec::new();
@@ -332,10 +426,40 @@ mod tests {
 
             // validate
             for (i, &p) in positions.iter().enumerate() {
-                if p.distance2(search_pos) <= SEARCH_RADIUS*SEARCH_RADIUS {
-                    assert!(potential_neighbors.contains(&(i as ParticleIndex)));
+                if p.distance2(search_pos) <= SEARCH_RADIUS * SEARCH_RADIUS {
+                    assert!(potential_neighbors.contains(&i));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn neighbors_contains_neighbors() {
+        const NUM_POSITIONS: usize = 1000;
+        const DENSITY: Real = 10.0;
+        const SEARCH_RADIUS: Real = 1.0;
+
+        let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(123456789);
+        let mut positions: Vec<Point> = std::iter::repeat_with(|| Point::from_vec(rng.gen::<Vector>() * (NUM_POSITIONS as Real / DENSITY).sqrt()))
+            .take(NUM_POSITIONS)
+            .collect();
+
+        let mut scratch_buffer_store = ScratchBufferStore::new();
+        let mut searcher = NeighborhoodSearch::new(SEARCH_RADIUS);
+        searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
+
+        for (particle, &search_pos) in positions.iter().enumerate() {
+            let mut neighbors = Vec::new();
+            searcher.foreach_neighbor(particle as ParticleIndex, |p| neighbors.push(p));
+
+            // validate
+            let mut neighbors_bruteforce = Vec::new();
+            for (i, &p) in positions.iter().enumerate() {
+                if i != particle && p.distance2(search_pos) <= SEARCH_RADIUS * SEARCH_RADIUS {
+                    neighbors_bruteforce.push(i as ParticleIndex);
+                }
+            }
+            assert_eq!(neighbors, neighbors_bruteforce);
         }
     }
 }
