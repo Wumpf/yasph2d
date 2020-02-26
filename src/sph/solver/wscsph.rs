@@ -56,9 +56,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 
         self.accellerations
             .par_iter_mut()
+            .enumerate()
             .zip(fluid_world.particles.velocities.par_iter())
             .zip(fluid_world.particles.positions.par_iter().zip(fluid_world.particles.densities.par_iter()))
-            .for_each(|((accelleration, &vi), (&ri, &rhoi))| {
+            .for_each(|(((pidx, accelleration), &vi), (&ri, &rhoi))| {
                 *accelleration = gravity;
 
                 let pi = Self::pressure(fluid_density, rhoi);
@@ -66,8 +67,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
                 Particles::foreach_neighbor_particle(
                     &particles,
-                    smoothing_length_sq,
-                    ri,
+                    pidx,
                     #[inline(always)]
                     |j, r_sq, ri_to_rj| {
                         let rhoj = particles.densities[j];

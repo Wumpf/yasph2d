@@ -1,7 +1,7 @@
 use crate::units::*;
 use cgmath::prelude::*;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct ScratchBuffer<T: Copy, TStorage: Copy> {
     pub buffer: Vec<T>,

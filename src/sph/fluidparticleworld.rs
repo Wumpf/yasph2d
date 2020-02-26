@@ -4,7 +4,7 @@ use ggez::graphics::Rect;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use super::neighborhood_search::NeighborhoodSearch;
+use super::neighborhood_search::{NeighborhoodSearch, ParticleIndex};
 use super::scratch_buffer::ScratchBufferStore;
 use super::smoothing_kernel::Kernel;
 
@@ -23,35 +23,31 @@ pub struct Particles {
 }
 
 impl Particles {
-    const OVERLAP_THRESHOLD: Real = 0.00001;
-
-    pub(super) fn foreach_neighbor_particle(&self, smoothing_length_sq: Real, ri: Point, f: impl FnMut(usize, Real, Vector) -> ()) {
-        Self::foreach_neighbor_particle_internal(&self.neighborhood, &self.positions, smoothing_length_sq, ri, f)
+    #[inline(always)]
+    pub(super) fn foreach_neighbor_particle(&self, pidx: usize, f: impl FnMut(usize, Real, Vector) -> ()) {
+        Self::foreach_neighbor_particle_internal(&self.neighborhood, &self.positions, pidx, f)
     }
 
     fn foreach_neighbor_particle_internal(
         neighborhood: &NeighborhoodSearch,
         positions: &[Point],
-        smoothing_length_sq: Real,
-        ri: Point,
+        pidx: usize,
         mut f: impl FnMut(usize, Real, Vector) -> (),
     ) {
-        neighborhood.foreach_potential_neighbor(
-            ri,
+        let ri = positions[pidx];
+        neighborhood.foreach_neighbor(
+            pidx as ParticleIndex,
             #[inline]
-            |j| {
-                let rj = positions[j as usize];
+            |neighbor| {
+                let rj = positions[neighbor as usize];
                 let ri_to_rj = rj - ri;
                 let r_sq = ri_to_rj.magnitude2();
-                if r_sq > smoothing_length_sq || r_sq < Self::OVERLAP_THRESHOLD {
-                    // Skips self and and degenerated overlaps
-                    return;
-                }
-                f(j as usize, r_sq, ri_to_rj);
+                f(neighbor as usize, r_sq, ri_to_rj);
             },
         );
     }
 
+    #[inline(always)]
     pub(super) fn foreach_neighbor_particle_boundary(&self, smoothing_length_sq: Real, ri: Point, f: impl FnMut(Real, Vector) -> ()) {
         Self::foreach_neighbor_particle_boundary_internal(&self.neighborhood, &self.boundary_particles, smoothing_length_sq, ri, f)
     }
@@ -232,15 +228,15 @@ impl FluidParticleWorld {
         self.particles
             .densities
             .par_iter_mut()
+            .enumerate()
             .zip(positions.par_iter())
-            .for_each(|(density, ri)| {
+            .for_each(|((pidx, density), ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
 
                 Particles::foreach_neighbor_particle_internal(
                     &neighborhood,
                     &positions,
-                    smoothing_length_sq,
-                    *ri,
+                    pidx,
                     #[inline(always)]
                     |_, r_sq, _| {
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
@@ -275,18 +271,19 @@ impl FluidParticleWorld {
 
         let mut additional_particle_attributes_real = additional_particle_attributes_real;
 
-        self.particles.neighborhood.update(
-            &mut self.scratch_buffers,
-            &mut self.particles.positions,
-            &mut additional_particle_attributes_vector,
-            &mut additional_particle_attributes_real,
-        );
-
         if self.boundary_changed {
             self.particles
                 .neighborhood
                 .update_boundary(&mut self.scratch_buffers, &mut self.particles.boundary_particles);
             self.boundary_changed = false;
         }
+
+        self.particles.neighborhood.update_particle_neighbors(
+            &mut self.scratch_buffers,
+            &mut self.particles.positions,
+            &mut additional_particle_attributes_vector,
+            &mut additional_particle_attributes_real,
+            &self.particles.boundary_particles,
+        );
     }
 }

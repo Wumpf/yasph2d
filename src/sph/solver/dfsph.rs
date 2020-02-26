@@ -59,15 +59,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let particles = &fluid_world.particles;
         alpha_values
             .par_iter_mut()
+            .enumerate()
             .zip(fluid_world.particles.positions.par_iter())
-            .for_each(|(alpha_value, &ri)| {
+            .for_each(|((pidx, alpha_value), &ri)| {
                 // self contribution is zero since gradient to self is zero
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum = Vector::zero();
 
                 particles.foreach_neighbor_particle(
-                    smoothing_length_sq,
-                    ri,
+                    pidx,
                     #[inline(always)]
                     |_, r_sq, ri_to_rj| {
                         let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
@@ -102,14 +102,14 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let reference_density = fluid_world.properties.fluid_density();
         self.predicted_densities
             .par_iter_mut()
+            .enumerate()
             .zip(fluid_world.particles.densities.par_iter())
             .zip(fluid_world.particles.positions.par_iter().zip(predicted_velocities.par_iter()))
-            .for_each(|((predicted_densitiy, &original_density), (&ri, &predicted_vi))| {
+            .for_each(|(((pidx, predicted_densitiy), &original_density), (&ri, &predicted_vi))| {
                 let mut delta = 0.0; // gradient to self is zero.
 
                 particles.foreach_neighbor_particle(
-                    smoothing_length_sq,
-                    ri,
+                    pidx,
                     #[inline(always)]
                     |j, r_sq, ri_to_rj| {
                         let delta_v = predicted_vi - predicted_velocities[j];
@@ -152,8 +152,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             // collapsing divition of dt² with multiply later -> divide delta with dt
 
             particles.foreach_neighbor_particle(
-                smoothing_length_sq,
-                particles.positions[i],
+                i,
                 #[inline(always)]
                 |j, r_sq, ri_to_rj| {
                     let kj = (predicted_densities[j] - reference_density) * alpha_values[j];
@@ -247,7 +246,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
 
             let particles = &fluid_world.particles;
             let particle_mass = fluid_world.properties.particle_mass();
-            let smoothing_length = fluid_world.properties.smoothing_length();
             let viscosity_model = &self.viscosity_model;
             let force_to_particle_velocitychange = dt / particle_mass;
             let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
@@ -259,8 +257,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
 
                 // viscosity
                 particles.foreach_neighbor_particle(
-                    smoothing_length,
-                    particles.positions[i],
+                    i,
                     #[inline(always)]
                     |j, r_sq, _ri_to_rj| {
                         *predicted_velocity += dt
