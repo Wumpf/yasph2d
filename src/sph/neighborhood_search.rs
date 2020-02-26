@@ -342,7 +342,7 @@ impl NeighborhoodSearch {
     /// * expected_max_density: Num particles expected per square unit
     pub fn new(radius: Real, //    , expected_max_density: Real
     ) -> NeighborhoodSearch {
-        let cell_size = radius * 2.0; // todo: experiment with larger cells
+        let cell_size = radius;
 
         //const particle_INDICES.buffer_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
         //let mut num_expected_in_cell = (cell_size * cell_size * expected_max_density + 0.5) as u32;
