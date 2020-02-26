@@ -45,13 +45,12 @@ impl GridProperties {
 }
 
 #[derive(Default)]
-struct PointSet {
-    cell_indices: Vec<CellIndex>,
-    particle_indices: Vec<ParticleIndex>, // TODO: Remove, make this temp
+struct CellGrid {
+    particle_cell_indices: Vec<CellIndex>,
     cells: Vec<Cell>,
 }
 
-impl PointSet {
+impl CellGrid {
     fn apply_sorting<T: Copy>(sorting: &[ParticleIndex], scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
         assert_eq!(scratch_buffer.len(), buffer_to_sort.len());
         assert_eq!(sorting.len(), buffer_to_sort.len());
@@ -71,24 +70,24 @@ impl PointSet {
         particle_attributes_vector: &mut [&mut Vec<Vector>],
         particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
+        let particle_indices_scratch_buffer = &mut scratch_buffers.get_buffer_uint(positions.len());
+        let particle_indices = &mut particle_indices_scratch_buffer.buffer;
+        self.particle_cell_indices.resize(positions.len(), 0);
+
         // we know that most particles have not changed since last frame
         // -> use insertion sort and building permutation array into it as well!
         // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
         // ... just a bit harder to parallize this way.
-        self.cell_indices.resize(positions.len(), 0);
-        self.particle_indices.resize(positions.len(), 0);
-        self.cells.clear();
-
         for (i, &pos) in positions.iter().enumerate() {
             let cidx = grid.position_to_cidx(pos);
 
-            self.particle_indices[i] = i as ParticleIndex;
-            self.cell_indices[i] = cidx;
+            particle_indices[i] = i as ParticleIndex;
+            self.particle_cell_indices[i] = cidx;
 
             for j in (0..i).rev() {
-                if self.cell_indices[j] > self.cell_indices[j + 1] {
-                    self.cell_indices.swap(j, j + 1);
-                    self.particle_indices.swap(j, j + 1);
+                if self.particle_cell_indices[j] > self.particle_cell_indices[j + 1] {
+                    self.particle_cell_indices.swap(j, j + 1);
+                    particle_indices.swap(j, j + 1);
                 } else {
                     break;
                 }
@@ -96,12 +95,12 @@ impl PointSet {
 
             // Version with memcpy instead of swaps (significantly slower in benchmarks - probably not compiler friendly)
             // let mut j = i;
-            // while j > 0 && self.cell_indices[j - 1] > cidx {
+            // while j > 0 && self.particle_cell_indices[j - 1] > cidx {
             //     j -= 1;
             // }
             // if i != j {
             //     unsafe {
-            //         core::ptr::copy(self.cell_indices.as_ptr().add(j), self.cell_indices.as_mut_ptr().add(j + 1), i - j);
+            //         core::ptr::copy(self.particle_cell_indices.as_ptr().add(j), self.particle_cell_indices.as_mut_ptr().add(j + 1), i - j);
             //     }
             //     unsafe {
             //         core::ptr::copy(
@@ -111,35 +110,31 @@ impl PointSet {
             //         );
             //     }
             //     // safe version:
-            //     //self.cell_indices.copy_within(j..i, j + 1);
+            //     //self.particle_cell_indices.copy_within(j..i, j + 1);
             //     //self.particle_indices.copy_within(j..i, j + 1);
             // }
-            // self.cell_indices[j] = cidx;
+            // self.particle_cell_indices[j] = cidx;
             // self.particle_indices[j] = i as ParticleIndex;
         }
 
-        self.cells.push(Cell {
-            first_particle: positions.len(),
-            cidx: CellIndex::max_value(),
-        }); // sentinel cell
 
         // Apply sorting.
         {
             microprofile::scope!("NeighborhoodSearch", "apply sorting");
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_point(positions.len());
-                Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, positions);
+                Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, positions);
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_vector(positions.len());
                 for attribute_buffer in particle_attributes_vector.iter_mut() {
-                    Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
             {
                 let mut scratch_buffer = scratch_buffers.get_buffer_real(positions.len());
                 for attribute_buffer in particle_attributes_real.iter_mut() {
-                    Self::apply_sorting(&self.particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
+                    Self::apply_sorting(&particle_indices, &mut scratch_buffer.buffer, *attribute_buffer);
                 }
             }
         }
@@ -148,7 +143,7 @@ impl PointSet {
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
         let mut prev_cidx = CellIndex::max_value();
-        for (pidx, &cidx) in self.cell_indices.iter().enumerate() {
+        for (pidx, &cidx) in self.particle_cell_indices.iter().enumerate() {
             if cidx != prev_cidx {
                 self.cells.push(Cell { first_particle: pidx, cidx });
                 prev_cidx = cidx;
@@ -248,8 +243,8 @@ impl PointSet {
 pub struct NeighborhoodSearch {
     grid: GridProperties,
 
-    dynamic_particles: PointSet,
-    boundary_particles: PointSet,
+    dynamic_particles: CellGrid,
+    boundary_particles: CellGrid,
 }
 
 impl NeighborhoodSearch {
