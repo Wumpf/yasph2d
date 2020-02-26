@@ -24,27 +24,12 @@ pub struct Particles {
 
 impl Particles {
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(&self, pidx: usize, f: impl FnMut(usize, Real, Vector) -> ()) {
-        Self::foreach_neighbor_particle_internal(&self.neighborhood, &self.positions, pidx, f)
+    pub(super) fn foreach_neighbor_particle(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        Self::foreach_neighbor_particle_internal(&self.neighborhood, pidx, f)
     }
-
-    fn foreach_neighbor_particle_internal(
-        neighborhood: &NeighborhoodSearch,
-        positions: &[Point],
-        pidx: usize,
-        mut f: impl FnMut(usize, Real, Vector) -> (),
-    ) {
-        let ri = positions[pidx];
-        neighborhood.foreach_neighbor(
-            pidx as ParticleIndex,
-            #[inline]
-            |neighbor| {
-                let rj = positions[neighbor as usize];
-                let ri_to_rj = rj - ri;
-                let r_sq = ri_to_rj.magnitude2();
-                f(neighbor as usize, r_sq, ri_to_rj);
-            },
-        );
+    #[inline]
+    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        neighborhood.foreach_neighbor(pidx, f);
     }
 
     #[inline(always)]
@@ -230,15 +215,15 @@ impl FluidParticleWorld {
             .par_iter_mut()
             .enumerate()
             .zip(positions.par_iter())
-            .for_each(|((pidx, density), ri)| {
+            .for_each(|((i, density), ri)| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
-
+                let i = i as u32;
                 Particles::foreach_neighbor_particle_internal(
                     &neighborhood,
-                    &positions,
-                    pidx,
+                    i,
                     #[inline(always)]
-                    |_, r_sq, _| {
+                    |j| {
+                        let r_sq = unsafe { positions.get_unchecked(i as usize).distance2(*positions.get_unchecked(j as usize)) };
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },

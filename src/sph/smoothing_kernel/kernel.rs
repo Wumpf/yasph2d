@@ -1,4 +1,5 @@
-use crate::units::{Real, Vector};
+use crate::units::{Point, Real, Vector};
+use cgmath::prelude::*;
 
 /// SPH smoothing kernel
 ///
@@ -17,6 +18,14 @@ pub trait Kernel {
     /// `r_sq`:     Squared length of ri_to_rj
     /// `r`:        Length of ri_to_rj
     fn gradient(&self, ri_to_rj: Vector, r_sq: Real, r: Real) -> Vector;
+
+    #[inline(always)]
+    fn gradient_from_particles(&self, positions: &[Point], i: u32, j: u32) -> Vector {
+        let ri_to_rj = unsafe { positions.get_unchecked(j as usize) - positions.get_unchecked(i as usize) };
+        let r_sq = ri_to_rj.magnitude2();
+        let r = r_sq.sqrt();
+        self.gradient(ri_to_rj, r_sq, r)
+    }
 
     /// Evaluates the laplacian of the kernel, i.e. the second derivative.
     /// `r_sq`:     Squared length of ri_to_rj

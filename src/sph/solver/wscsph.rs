@@ -5,6 +5,7 @@ use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
 use super::Solver;
 use crate::units::*;
+use cgmath::prelude::*;
 use rayon::prelude::*;
 
 // Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
@@ -59,19 +60,23 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             .enumerate()
             .zip(fluid_world.particles.velocities.par_iter())
             .zip(fluid_world.particles.positions.par_iter().zip(fluid_world.particles.densities.par_iter()))
-            .for_each(|(((pidx, accelleration), &vi), (&ri, &rhoi))| {
+            .for_each(|(((i, accelleration), &vi), (&ri, &rhoi))| {
                 *accelleration = gravity;
 
                 let pi = Self::pressure(fluid_density, rhoi);
+                let i = i as u32;
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
                 Particles::foreach_neighbor_particle(
                     &particles,
-                    pidx,
+                    i,
                     #[inline(always)]
-                    |j, r_sq, ri_to_rj| {
+                    |j| {
+                        let j = j as usize;
                         let rhoj = particles.densities[j];
                         let pj = Self::pressure(fluid_density, rhoj);
+                        let ri_to_rj = particles.positions[j] - ri;
+                        let r_sq = ri_to_rj.magnitude2();
                         let r = r_sq.sqrt();
 
                         // accelleration from pressure force
