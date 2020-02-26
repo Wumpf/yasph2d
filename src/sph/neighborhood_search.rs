@@ -263,6 +263,7 @@ impl CellGrid {
 pub struct NeighborLists {
     neighborhood_list_starts: Vec<u32>,
     neighborhood_lists: Vec<ParticleIndex>,
+    local_neighbor_sets: Vec<Vec<ParticleIndex>>, // cached merely to avoid realloc
 }
 
 impl NeighborLists {
@@ -273,24 +274,31 @@ impl NeighborLists {
         self.neighborhood_list_starts.resize(positions.len() + 1, 0);
         self.neighborhood_lists.clear();
         let radius_sq = grid.radius * grid.radius;
-        let mut local_neighbor_sets: Vec<Vec<ParticleIndex>> = Vec::new(); // todo: don't realloc those?
 
         for cell_slice in cell_grid.cells.windows(2) {
             let current_cell = cell_slice[0];
             let next_cell = cell_slice[1];
             let num_particles_in_cell = next_cell.first_particle - current_cell.first_particle;
 
-            for neighbor_set in local_neighbor_sets.iter_mut() {
+            for neighbor_set in self.local_neighbor_sets.iter_mut() {
                 neighbor_set.clear();
             }
-            local_neighbor_sets.resize_with(num_particles_in_cell, || Vec::<ParticleIndex>::with_capacity(100)); // todo: what's a good capacity value?
+            // Don't shrink, because otherwise we have a ton of reallocs!
+            if self.local_neighbor_sets.len() < num_particles_in_cell {
+                self.local_neighbor_sets
+                    .resize_with(num_particles_in_cell, || Vec::<ParticleIndex>::with_capacity(128));
+                // todo: what's a good capacity value?
+            }
 
             let (cidx_min, cidx_max) = CellGrid::get_cell_neighborbox(current_cell.cidx);
 
             cell_grid.foreach_particle_in_cell_box(cidx_min, cidx_max, |neighbor_pidx| {
+                let pos_neighbor = unsafe { *positions.get_unchecked(neighbor_pidx) };
+
                 for pidx in current_cell.first_particle..next_cell.first_particle {
-                    if pidx != neighbor_pidx && positions[pidx].distance2(positions[neighbor_pidx]) <= radius_sq {
-                        local_neighbor_sets[pidx - current_cell.first_particle].push(neighbor_pidx as ParticleIndex);
+                    let pos = unsafe { *positions.get_unchecked(pidx) };
+                    if pos.distance2(pos_neighbor) <= radius_sq && pidx != neighbor_pidx {
+                        self.local_neighbor_sets[pidx - current_cell.first_particle].push(neighbor_pidx as ParticleIndex);
                     }
                 }
             });
@@ -300,7 +308,7 @@ impl NeighborLists {
             for pidx in current_cell.first_particle..next_cell.first_particle {
                 self.neighborhood_list_starts[pidx] = self.neighborhood_lists.len() as u32;
                 self.neighborhood_lists
-                    .extend_from_slice(&local_neighbor_sets[pidx - current_cell.first_particle]);
+                    .extend_from_slice(&self.local_neighbor_sets[pidx - current_cell.first_particle]);
             }
         }
         *self.neighborhood_list_starts.last_mut().unwrap() = self.neighborhood_lists.len() as u32;
@@ -308,10 +316,12 @@ impl NeighborLists {
 
     #[inline]
     pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex) -> ()) {
-        let first = self.neighborhood_list_starts[particle as usize] as usize;
-        let last = self.neighborhood_list_starts[particle as usize + 1] as usize;
-        for i in first..last {
-            f(unsafe { *self.neighborhood_lists.get_unchecked(i) });
+        unsafe {
+            let first = *self.neighborhood_list_starts.get_unchecked(particle as usize) as usize;
+            let last = *self.neighborhood_list_starts.get_unchecked((particle + 1) as usize) as usize;
+            for i in first..last {
+                f(*self.neighborhood_lists.get_unchecked(i));
+            }
         }
     }
 }
