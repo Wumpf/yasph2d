@@ -24,6 +24,12 @@ pub const MORTON_YBITS: u32 = 0b10101010_10101010_10101010_10101010;
 //   2 (2.00%) high severe
 pub use encode_lookup as encode;
 
+// Decodes x part of 2d morton code.
+pub use decode_x_bitfiddle as decode_x;
+
+// Decodes y part of 2d morton code.
+pub use decode_y_bitfiddle as decode_y;
+
 // "Insert" a 0 bit after each of the 16 low bits of x
 //
 // via https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
@@ -42,6 +48,32 @@ fn part_1by1(x: u16) -> u32 {
 #[inline]
 pub fn encode_bitfiddle(x: u16, y: u16) -> u32 {
     (part_1by1(y) << 1) + part_1by1(x)
+}
+
+// Inverse of part_1by1 - "delete" all odd-indexed bits
+//
+// via https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/
+#[inline]
+fn compact_1by1(x: u32) -> u32 {
+    let mut x = x;
+    x &= 0x55555555; // x = -f-e -d-c -b-a -9-8 -7-6 -5-4 -3-2 -1-0
+    x = (x ^ (x >> 1)) & 0x33333333; // x = --fe --dc --ba --98 --76 --54 --32 --10
+    x = (x ^ (x >> 2)) & 0x0f0f0f0f; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
+    x = (x ^ (x >> 4)) & 0x00ff00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
+    x = (x ^ (x >> 8)) & 0x0000ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
+    x
+}
+
+// Decodes x part of 2d morton code.
+#[inline]
+pub fn decode_x_bitfiddle(morton: u32) -> u32 {
+    compact_1by1(morton >> 0)
+}
+
+// Decodes y part of 2d morton code.
+#[inline]
+pub fn decode_y_bitfiddle(morton: u32) -> u32 {
+    compact_1by1(morton >> 1)
 }
 
 // Encodes two 16(!) bit numbers into a single 32bit morton code by interleaving the bits.
@@ -174,6 +206,25 @@ mod tests {
                 encode_bitfiddle(0b1111_0001_0010_0000, 0b1001_1101_1000_1100),
                 0b1101_0111_1010_0011_1000_0100_1010_0000
             );
+        }
+    }
+
+    mod decode {
+        use super::super::*;
+
+        #[test]
+        fn bittfiddle_works_for_examples() {
+            assert_eq!(decode_x_bitfiddle(12), 2);
+            assert_eq!(decode_y_bitfiddle(12), 2);
+
+            assert_eq!(decode_x_bitfiddle(45), 3);
+            assert_eq!(decode_y_bitfiddle(45), 6);
+
+            assert_eq!(decode_x_bitfiddle(16), 4);
+            assert_eq!(decode_y_bitfiddle(16), 0);
+
+            assert_eq!(decode_x_bitfiddle(0b1101_0111_1010_0011_1000_0100_1010_0000), 0b1111_0001_0010_0000);
+            assert_eq!(decode_y_bitfiddle(0b1101_0111_1010_0011_1000_0100_1010_0000), 0b1001_1101_1000_1100);
         }
     }
 
