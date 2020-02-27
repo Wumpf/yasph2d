@@ -13,13 +13,14 @@
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
-            "externalConsole": false
+            "externalConsole": false,
+            "preLaunchTask": "cargo build",
         },
         {
             "name": "Run Test Debugger",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/yasph2d-5c147c71ed920d64.exe",
+            "program": "${workspaceFolder}/target/debug/yasph2d-7b66dcf5fc269ecb.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

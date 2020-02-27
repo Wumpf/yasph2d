@@ -16,6 +16,7 @@
         },
         {
             "type": "cargo",
+            "label": "cargo build",
             "subcommand": "build",
             "problemMatcher": [
                 "$rustc"
