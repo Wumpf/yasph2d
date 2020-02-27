@@ -4,22 +4,22 @@ use crate::units::*;
 use cgmath::prelude::*;
 
 pub type ParticleIndex = u32;
-pub type CellIndex = u32;
+pub type MortonCellIndex = u32;
 
 #[derive(Copy, Clone)]
-struct CellPos {
+struct MortonCellPos {
     x: u16,
     y: u16,
 }
-impl CellPos {
+impl MortonCellPos {
     #[inline]
-    fn to_cidx(self) -> CellIndex {
+    fn to_cidx(self) -> MortonCellIndex {
         super::morton::encode(self.x, self.y)
     }
 
     #[inline]
-    fn from_cidx(cidx: CellIndex) -> CellPos {
-        CellPos {
+    fn from_cidx(cidx: MortonCellIndex) -> MortonCellPos {
+        MortonCellPos {
             x: super::morton::decode_x(cidx) as u16,
             y: super::morton::decode_y(cidx) as u16,
         }
@@ -27,9 +27,16 @@ impl CellPos {
 }
 
 #[derive(Copy, Clone)]
-struct Cell {
+struct MortonCell {
     first_particle: usize,
-    cidx: CellIndex,
+    cidx: MortonCellIndex,
+}
+
+// Runs of particle indices for a MortonCell and its eight neighbors.
+struct MortonCellNeihborhoodRuns {
+    // In a 3x3 2D morton box there are at max 5 continous runs (can be less!)
+    particle_index_runs: [(usize, usize); 5],
+    num_runs: usize, // remove? not really needed I guess
 }
 
 struct GridProperties {
@@ -39,26 +46,26 @@ struct GridProperties {
 }
 impl GridProperties {
     #[inline]
-    fn position_to_cellpos(&self, position: Point) -> CellPos {
+    fn position_to_mortoncellpos(&self, position: Point) -> MortonCellPos {
         let cellspace = (position - self.grid_min) * self.cell_size_inv;
-        CellPos {
+        MortonCellPos {
             x: cellspace.x as u16,
             y: cellspace.y as u16,
         }
     }
 
     #[inline]
-    fn position_to_cidx(&self, position: Point) -> CellIndex {
-        self.position_to_cellpos(position).to_cidx()
+    fn position_to_cidx(&self, position: Point) -> MortonCellIndex {
+        self.position_to_mortoncellpos(position).to_cidx()
     }
 }
 
 #[derive(Default)]
-struct CellGrid {
-    cells: Vec<Cell>,
+struct CompactMortonCellGrid {
+    cells: Vec<MortonCell>,
 }
 
-impl CellGrid {
+impl CompactMortonCellGrid {
     fn apply_sorting<T: Copy>(sorting: &[ParticleIndex], scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
         assert_eq!(scratch_buffer.len(), buffer_to_sort.len());
         assert_eq!(sorting.len(), buffer_to_sort.len());
@@ -78,7 +85,7 @@ impl CellGrid {
         particle_attributes_vector: &mut [&mut Vec<Vector>],
         particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
-        microprofile::scope!("NeighborhoodSearch", "CellGrid::update");
+        microprofile::scope!("NeighborhoodSearch", "CompactMortonCellGrid::update");
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
         let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
@@ -101,29 +108,7 @@ impl CellGrid {
                     break;
                 }
             }
-
-            // Version with memcpy instead of swaps (significantly slower in benchmarks - probably not compiler friendly)
-            // let mut j = i;
-            // while j > 0 && cell_indices.buffer[j - 1] > cidx {
-            //     j -= 1;
-            // }
-            // if i != j {
-            //     unsafe {
-            //         core::ptr::copy(cell_indices.buffer.as_ptr().add(j), cell_indices.buffer.as_mut_ptr().add(j + 1), i - j);
-            //     }
-            //     unsafe {
-            //         core::ptr::copy(
-            //             self.indices.buffer.as_ptr().add(j),
-            //             self.indices.buffer.as_mut_ptr().add(j + 1),
-            //             i - j,
-            //         );
-            //     }
-            //     // safe version:
-            //     //cell_indices.buffer.copy_within(j..i, j + 1);
-            //     //self.indices.buffer.copy_within(j..i, j + 1);
-            // }
-            // cell_indices.buffer[j] = cidx;
-            // self.indices.buffer[j] = i as ParticleIndex;
+            // Note: Tried memcpy instead of swaps but was significantly slower in benchmarks - probably not compiler friendly
         }
 
         // Apply sorting.
@@ -150,21 +135,21 @@ impl CellGrid {
         // create cells.
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
-        let mut prev_cidx = CellIndex::max_value();
+        let mut prev_cidx = MortonCellIndex::max_value();
         for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
             if cidx != prev_cidx {
-                self.cells.push(Cell { first_particle: pidx, cidx });
+                self.cells.push(MortonCell { first_particle: pidx, cidx });
                 prev_cidx = cidx;
             }
         }
-        self.cells.push(Cell {
+        self.cells.push(MortonCell {
             first_particle: positions.len(),
-            cidx: CellIndex::max_value(),
+            cidx: MortonCellIndex::max_value(),
         }); // sentinel cell
     }
 
-    // finds cell array index first cell that has an equal or bigger for a given CellIndex
-    fn find_next_cell(cells: &[Cell], cidx: CellIndex) -> usize {
+    // finds cell array index first cell that has an equal or bigger for a given MortonCellIndex
+    fn find_next_cell(cells: &[MortonCell], cidx: MortonCellIndex) -> usize {
         const LINEAR_SEARCH_THRESHHOLD: usize = 16;
         let mut min = 0;
         let mut max = cells.len(); // exclusive
@@ -186,7 +171,11 @@ impl CellGrid {
         max
     }
 
-    pub fn foreach_particle_in_cell_box(&self, cidx_min: CellIndex, cidx_max: CellIndex, mut f: impl FnMut(usize) -> ()) {
+    fn get_particle_runs_in_neighborbox(&self, cidx: MortonCellIndex) -> MortonCellNeihborhoodRuns {
+        let pos = MortonCellPos::from_cidx(cidx);
+        let cidx_min = MortonCellPos { x: pos.x - 1, y: pos.y - 1 }.to_cidx();
+        let cidx_max = MortonCellPos { x: pos.x + 1, y: pos.y + 1 }.to_cidx();
+
         let cidx_min_xbits = cidx_min & super::morton::MORTON_XBITS;
         let cidx_min_ybits = cidx_min & super::morton::MORTON_YBITS;
         let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
@@ -197,6 +186,11 @@ impl CellGrid {
         // Note: Already tried doing this with iterators. it's hard to do and slow!
         let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
         let mut cell = self.cells[cell_arrayidx];
+
+        let mut runs = MortonCellNeihborhoodRuns {
+            particle_index_runs: [(0, 0); 5],
+            num_runs: 0,
+        };
 
         while cell.cidx <= cidx_max {
             // skip until cell is in rect
@@ -215,12 +209,12 @@ impl CellGrid {
                 cell = self.cells[cell_arrayidx];
 
                 if cell.cidx > cidx_max {
-                    return;
+                    return runs;
                 }
             }
 
-            // find particle range
-            let first_particle = cell.first_particle;
+            // find particle run
+            runs.particle_index_runs[runs.num_runs].0 = cell.first_particle;
             loop {
                 cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
                 cell = self.cells[cell_arrayidx];
@@ -228,13 +222,13 @@ impl CellGrid {
                     break;
                 }
             }
-            let last_particle = cell.first_particle;
-            assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
-
-            // Consume particles.
-            for p in first_particle..last_particle {
-                f(p);
+            runs.particle_index_runs[runs.num_runs].1 = cell.first_particle;
+            runs.num_runs += 1;
+            if runs.num_runs == runs.particle_index_runs.len() {
+                break;
             }
+
+            assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
 
             // We know current cell isn't in the rect, so skip it.
             cell_arrayidx += 1;
@@ -243,19 +237,18 @@ impl CellGrid {
             }
             cell = self.cells[cell_arrayidx];
         }
+
+        runs
     }
 
-    fn get_cell_neighborbox(cidx: CellIndex) -> (CellIndex, CellIndex) {
-        let pos = CellPos::from_cidx(cidx);
-        let min = CellPos { x: pos.x - 1, y: pos.y - 1 };
-        let max = CellPos { x: pos.x + 1, y: pos.y + 1 };
-        (min.to_cidx(), max.to_cidx())
-    }
-
-    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, f: impl FnMut(usize) -> ()) {
-        let cidx_min = grid.position_to_cidx(position - Vector::new(grid.radius, grid.radius));
-        let cidx_max = grid.position_to_cidx(position + Vector::new(grid.radius, grid.radius));
-        self.foreach_particle_in_cell_box(cidx_min, cidx_max, f);
+    // todo: remove, impl already no longer optimal
+    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(usize) -> ()) {
+        let runs = self.get_particle_runs_in_neighborbox(grid.position_to_cidx(position));
+        for range in runs.particle_index_runs.iter() {
+            for j in range.0..range.1 {
+                f(j);
+            }
+        }
     }
 }
 
@@ -263,11 +256,10 @@ impl CellGrid {
 pub struct NeighborLists {
     neighborhood_list_starts: Vec<u32>,
     neighborhood_lists: Vec<ParticleIndex>,
-    local_neighbor_sets: Vec<Vec<ParticleIndex>>, // cached merely to avoid realloc
 }
 
 impl NeighborLists {
-    fn update(&mut self, grid: &GridProperties, positions: &[Point], cell_grid: &CellGrid) {
+    fn update(&mut self, grid: &GridProperties, positions: &[Point], cell_grid: &CompactMortonCellGrid) {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
         assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
 
@@ -275,40 +267,42 @@ impl NeighborLists {
         self.neighborhood_lists.clear();
         let radius_sq = grid.radius * grid.radius;
 
+        const MAX_NUM_NEIGHBORS: usize = 128; // todo: At least pretend to be scientific about this value.
+        let mut neighbor_set = [0; MAX_NUM_NEIGHBORS];
+
+        // Look at cell pairs in the compact cell grid since next cell tells us how many particles are in the current.
         for cell_slice in cell_grid.cells.windows(2) {
             let current_cell = cell_slice[0];
             let next_cell = cell_slice[1];
-            let num_particles_in_cell = next_cell.first_particle - current_cell.first_particle;
 
-            for neighbor_set in self.local_neighbor_sets.iter_mut() {
-                neighbor_set.clear();
-            }
-            // Don't shrink, because otherwise we have a ton of reallocs!
-            if self.local_neighbor_sets.len() < num_particles_in_cell {
-                self.local_neighbor_sets
-                    .resize_with(num_particles_in_cell, || Vec::<ParticleIndex>::with_capacity(128));
-                // todo: what's a good capacity value?
-            }
+            // set of all potential neighbors
+            let particle_runs = cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
 
-            let (cidx_min, cidx_max) = CellGrid::get_cell_neighborbox(current_cell.cidx);
+            // for each particle in this cell...
+            for i in current_cell.first_particle..next_cell.first_particle {
+                let posi = unsafe { *positions.get_unchecked(i) };
 
-            cell_grid.foreach_particle_in_cell_box(cidx_min, cidx_max, |neighbor_pidx| {
-                let pos_neighbor = unsafe { *positions.get_unchecked(neighbor_pidx) };
-
-                for pidx in current_cell.first_particle..next_cell.first_particle {
-                    let pos = unsafe { *positions.get_unchecked(pidx) };
-                    if pos.distance2(pos_neighbor) <= radius_sq && pidx != neighbor_pidx {
-                        self.local_neighbor_sets[pidx - current_cell.first_particle].push(neighbor_pidx as ParticleIndex);
+                // gather real neighbors
+                let mut num_neighbors = 0;
+                'neighbor_search: for range in particle_runs.particle_index_runs.iter() {
+                    for j in range.0..range.1 {
+                        let posj = unsafe { *positions.get_unchecked(j) };
+                        if posi.distance2(posj) <= radius_sq && i != j {
+                            neighbor_set[num_neighbors] = j as u32;
+                            num_neighbors += 1;
+                            if num_neighbors == MAX_NUM_NEIGHBORS {
+                                //println!("particle has too many neighbors");
+                                break 'neighbor_search;
+                            }
+                        }
                     }
                 }
-            });
 
-            // write out neighbors.
-            // todo: compress
-            for pidx in current_cell.first_particle..next_cell.first_particle {
-                self.neighborhood_list_starts[pidx] = self.neighborhood_lists.len() as u32;
-                self.neighborhood_lists
-                    .extend_from_slice(&self.local_neighbor_sets[pidx - current_cell.first_particle]);
+                // safe neighbors
+                // todo: compress
+                // todo: Need a lockfree append buffer to be able to make things parallel
+                self.neighborhood_list_starts[i] = self.neighborhood_lists.len() as u32;
+                self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]);
             }
         }
         *self.neighborhood_list_starts.last_mut().unwrap() = self.neighborhood_lists.len() as u32;
@@ -330,8 +324,8 @@ pub struct NeighborhoodSearch {
     grid: GridProperties,
 
     // todo: Erase boundary/particle knowledge and just work with registered point sets.
-    cellgrid_particles: CellGrid,
-    cellgrid_boundary: CellGrid,
+    cellgrid_particles: CompactMortonCellGrid,
+    cellgrid_boundary: CompactMortonCellGrid,
 
     particle_particle_neighbors: NeighborLists,
     particle_boundary_neighbors: NeighborLists,
