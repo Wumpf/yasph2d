@@ -20,8 +20,8 @@ pub trait Kernel {
     fn gradient(&self, ri_to_rj: Vector, r_sq: Real, r: Real) -> Vector;
 
     #[inline(always)]
-    fn gradient_from_particles(&self, positions: &[Point], i: u32, j: u32) -> Vector {
-        let ri_to_rj = unsafe { positions.get_unchecked(j as usize) - positions.get_unchecked(i as usize) };
+    fn gradient_from_positions(&self, ri: Point, rj: Point) -> Vector {
+        let ri_to_rj = rj - ri;
         let r_sq = ri_to_rj.magnitude2();
         let r = r_sq.sqrt();
         self.gradient(ri_to_rj, r_sq, r)

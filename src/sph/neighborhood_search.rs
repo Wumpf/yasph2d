@@ -259,7 +259,14 @@ pub struct NeighborLists {
 }
 
 impl NeighborLists {
-    fn update(&mut self, grid: &GridProperties, positions: &[Point], cell_grid: &CompactMortonCellGrid) {
+    fn update(
+        &mut self,
+        grid: &GridProperties,
+        positions: &[Point],
+        cell_grid: &CompactMortonCellGrid,
+        neighbor_positions: &[Point],
+        neighbor_cell_grid: &CompactMortonCellGrid,
+    ) {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
         assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
 
@@ -276,18 +283,20 @@ impl NeighborLists {
             let next_cell = cell_slice[1];
 
             // set of all potential neighbors
-            let particle_runs = cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
+            let particle_runs = neighbor_cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
 
             // for each particle in this cell...
             for i in current_cell.first_particle..next_cell.first_particle {
                 let posi = unsafe { *positions.get_unchecked(i) };
 
                 // gather real neighbors
+                const MIN_DISTANCE: Real = 1.0e-10; // used to filter for degenerated cases & self intersect
                 let mut num_neighbors = 0;
                 'neighbor_search: for range in particle_runs.particle_index_runs.iter() {
                     for j in range.0..range.1 {
-                        let posj = unsafe { *positions.get_unchecked(j) };
-                        if posi.distance2(posj) <= radius_sq && i != j {
+                        let posj = unsafe { *neighbor_positions.get_unchecked(j) };
+                        let distsq = posi.distance2(posj);
+                        if distsq <= radius_sq && distsq > MIN_DISTANCE {
                             neighbor_set[num_neighbors] = j as u32;
                             num_neighbors += 1;
                             if num_neighbors == MAX_NUM_NEIGHBORS {
@@ -381,17 +390,32 @@ impl NeighborhoodSearch {
             particle_attributes_vector,
             particle_attributes_real,
         );
-        self.particle_particle_neighbors
-            .update(&self.grid, particle_positions, &self.cellgrid_particles);
-        // if !boundary_positions.is_empty() {
-        //     self.particle_boundary_neighbors
-        //         .update(&self.grid, particle_positions, &self.cellgrid_boundary, boundary_positions);
-        // }
+        self.particle_particle_neighbors.update(
+            &self.grid,
+            particle_positions,
+            &self.cellgrid_particles,
+            particle_positions,
+            &self.cellgrid_particles,
+        );
+        if !boundary_positions.is_empty() {
+            self.particle_boundary_neighbors.update(
+                &self.grid,
+                particle_positions,
+                &self.cellgrid_particles,
+                boundary_positions,
+                &self.cellgrid_boundary,
+            );
+        }
     }
 
     #[inline]
     pub fn foreach_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
         self.particle_particle_neighbors.foreach_neighbor(particle, f);
+    }
+
+    #[inline]
+    pub fn foreach_boundary_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        self.particle_boundary_neighbors.foreach_neighbor(particle, f);
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {
@@ -406,7 +430,6 @@ impl NeighborhoodSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cgmath::prelude::*;
     use rand::prelude::*;
 
     #[test]

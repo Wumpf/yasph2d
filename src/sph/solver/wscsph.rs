@@ -1,5 +1,4 @@
 use super::super::fluidparticleworld::FluidParticleWorld;
-use super::super::fluidparticleworld::Particles;
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
@@ -47,7 +46,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         // According to https://www8.cs.umu.se/kurser/TDBD24/VT06/lectures/sphsurvivalkit.pdf
         // the "good way" to do symmetric forces in SPH is -m (pi + pj) / (2 * rhoj * rhoi)
 
-        let smoothing_length_sq = fluid_world.properties.smoothing_length() * fluid_world.properties.smoothing_length();
         let fluid_density = fluid_world.properties.fluid_density();
         let particles = &fluid_world.particles;
         let pressure_kernel = self.pressure_kernel;
@@ -67,8 +65,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 let i = i as u32;
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
-                Particles::foreach_neighbor_particle(
-                    &particles,
+                particles.foreach_neighbor_particle(
                     i,
                     #[inline(always)]
                     |j| {
@@ -94,10 +91,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                 // Simple formulation found in http://www.unige.ch/math/folks/sutti/SPH_2019.pdf under 2.3.4 Radial force
                 // ("SPH treatment of boundaries and application to moving objects" by Marco Sutti)
                 particles.foreach_neighbor_particle_boundary(
-                    smoothing_length_sq,
-                    ri,
+                    i,
                     #[inline(always)]
-                    |r_sq, ri_to_rj| {
+                    |j| {
+                        let ri_to_rj = particles.boundary_particles[j as usize] - ri;
+                        let r_sq = ri_to_rj.magnitude2();
                         *accelleration -= boundary_force_factor * pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
                     },
                 );

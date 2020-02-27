@@ -33,31 +33,12 @@ impl Particles {
     }
 
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_boundary(&self, smoothing_length_sq: Real, ri: Point, f: impl FnMut(Real, Vector) -> ()) {
-        Self::foreach_neighbor_particle_boundary_internal(&self.neighborhood, &self.boundary_particles, smoothing_length_sq, ri, f)
+    pub(super) fn foreach_neighbor_particle_boundary(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        Self::foreach_neighbor_particle_internal_boundary_new(&self.neighborhood, pidx, f)
     }
-
-    fn foreach_neighbor_particle_boundary_internal(
-        neighborhood: &NeighborhoodSearch,
-        positions: &[Point],
-        smoothing_length_sq: Real,
-        ri: Point,
-        mut f: impl FnMut(Real, Vector) -> (),
-    ) {
-        neighborhood.foreach_potential_boundary_neighbor(
-            ri,
-            #[inline]
-            |j| {
-                let rj = positions[j as usize];
-                let ri_to_rj = rj - ri;
-                let r_sq = ri_to_rj.magnitude2();
-                if r_sq > smoothing_length_sq {
-                    // Skips self and and degenerated overlaps
-                    return;
-                }
-                f(r_sq, ri_to_rj);
-            },
-        );
+    #[inline]
+    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+        neighborhood.foreach_boundary_neighbor(pidx, f);
     }
 }
 
@@ -203,19 +184,16 @@ impl FluidParticleWorld {
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.properties.particle_mass();
-
-        // Density contributions are symmetric, but that is hard to use in a parallel loop.
         let neighborhood = &self.particles.neighborhood;
-        let smoothing_length_sq = self.properties.smoothing_length * self.properties.smoothing_length;
-        let boundary_particles = &self.particles.boundary_particles;
         let positions = &self.particles.positions;
+        let boundary_positions = &self.particles.boundary_particles;
 
         self.particles
             .densities
             .par_iter_mut()
-            .enumerate()
             .zip(positions.par_iter())
-            .for_each(|((i, density), ri)| {
+            .enumerate()
+            .for_each(|(i, (density, ri))| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
                 let i = i as u32;
                 Particles::foreach_neighbor_particle_internal(
@@ -223,18 +201,17 @@ impl FluidParticleWorld {
                     i,
                     #[inline(always)]
                     |j| {
-                        let r_sq = unsafe { positions.get_unchecked(i as usize).distance2(*positions.get_unchecked(j as usize)) };
+                        let r_sq = ri.distance2(unsafe { *positions.get_unchecked(j as usize) });
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },
                 );
-                Particles::foreach_neighbor_particle_boundary_internal(
+                Particles::foreach_neighbor_particle_internal_boundary_new(
                     &neighborhood,
-                    &boundary_particles,
-                    smoothing_length_sq,
-                    *ri,
+                    i,
                     #[inline(always)]
-                    |r_sq, _| {
+                    |j| {
+                        let r_sq = ri.distance2(unsafe { *boundary_positions.get_unchecked(j as usize) });
                         let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
                         *density += density_contribution;
                     },

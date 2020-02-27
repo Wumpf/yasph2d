@@ -54,7 +54,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     fn compute_alpha_factors(alpha_values: &mut Vec<Real>, fluid_world: &FluidParticleWorld, kernel: impl Kernel + std::marker::Sync) {
         microprofile::scope!("DFSPHSolver", "compute_alpha_factors");
         const EPSILON: Real = 1e-6;
-        let smoothing_length_sq = fluid_world.properties.smoothing_length() * fluid_world.properties.smoothing_length();
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         alpha_values
@@ -70,17 +69,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     i,
                     #[inline(always)]
                     |j| {
-                        let grad_ij = kernel.gradient_from_particles(&particles.positions, i, j) * particle_mass;
+                        let rj = particles.positions[j as usize];
+                        let grad_ij = kernel.gradient_from_positions(ri, rj) * particle_mass;
                         gradient_sum += grad_ij;
                         gradient_square_sum += grad_ij.magnitude2();
                     },
                 );
                 particles.foreach_neighbor_particle_boundary(
-                    smoothing_length_sq,
-                    ri,
+                    i,
                     #[inline(always)]
-                    |r_sq, ri_to_rj| {
-                        let grad_ij = kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()) * particle_mass;
+                    |j| {
+                        let rj = particles.boundary_particles[j as usize];
+                        let grad_ij = kernel.gradient_from_positions(ri, rj) * particle_mass;
                         gradient_sum += grad_ij;
                         gradient_square_sum += grad_ij.magnitude2();
                     },
@@ -93,8 +93,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     fn predict_densities(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         microprofile::scope!("DFSPHSolver", "predict_densities");
-        let smoothing_length = fluid_world.properties.smoothing_length();
-        let smoothing_length_sq = smoothing_length * smoothing_length;
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let predicted_velocities = &self.predicted_velocities;
@@ -112,17 +110,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     i,
                     #[inline(always)]
                     |j| {
+                        let rj = particles.positions[j as usize];
                         let delta_v = predicted_vi - predicted_velocities[j as usize];
-                        delta += delta_v.dot(kernel.gradient_from_particles(&particles.positions, i, j));
+                        delta += delta_v.dot(kernel.gradient_from_positions(ri, rj));
                     },
                 );
                 particles.foreach_neighbor_particle_boundary(
-                    smoothing_length_sq,
-                    ri,
+                    i,
                     #[inline(always)]
-                    |r_sq, ri_to_rj| {
+                    |j| {
+                        let rj = particles.boundary_particles[j as usize];
                         let delta_v = predicted_vi;
-                        delta += delta_v.dot(kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt()));
+                        delta += delta_v.dot(kernel.gradient_from_positions(ri, rj));
                     },
                 );
                 *predicted_densitiy = original_density + delta * particle_mass * dt;
@@ -134,8 +133,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
     fn update_velocity_prediction(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
         microprofile::scope!("DFSPHSolver", "update_velocity_prediction");
-        let smoothing_length = fluid_world.properties.smoothing_length();
-        let smoothing_length_sq = smoothing_length * smoothing_length;
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let predicted_densities = &self.predicted_densities;
@@ -147,28 +144,28 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
             let mut delta: Vector = Zero::zero(); // gradient to self is zero.
             let ki = (predicted_densities[i] - reference_density) * alpha_values[i];
+            let ri = particles.positions[i];
 
             // compared to k values in paper already divided with density
             // collapsing divition of dt² with multiply later -> divide delta with dt
 
-            {
-                let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let kj = (predicted_densities[j as usize] - reference_density) * alpha_values[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_particles(&particles.positions, i, j);
-                    },
-                );
-            }
-            particles.foreach_neighbor_particle_boundary(
-                smoothing_length_sq,
-                particles.positions[i],
+            let i = i as u32;
+            particles.foreach_neighbor_particle(
+                i,
                 #[inline(always)]
-                |r_sq, ri_to_rj| {
+                |j| {
+                    let rj = particles.positions[j as usize];
+                    let kj = (predicted_densities[j as usize] - reference_density) * alpha_values[j as usize];
+                    delta += (ki + kj) * kernel.gradient_from_positions(ri, rj);
+                },
+            );
+            particles.foreach_neighbor_particle_boundary(
+                i,
+                #[inline(always)]
+                |j| {
                     // compared to k values in paper already divided with density and multiplied with dt²!
-                    delta += ki * kernel.gradient(ri_to_rj, r_sq, r_sq.sqrt());
+                    let rj = particles.boundary_particles[j as usize];
+                    delta += ki * kernel.gradient_from_positions(ri, rj);
                 },
             );
 
