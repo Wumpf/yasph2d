@@ -56,18 +56,18 @@ pub fn encode_bitfiddle(x: u16, y: u16) -> u32 {
 #[inline]
 fn compact_1by1(x: u32) -> u32 {
     let mut x = x;
-    x &= 0x55555555; // x = -f-e -d-c -b-a -9-8 -7-6 -5-4 -3-2 -1-0
-    x = (x ^ (x >> 1)) & 0x33333333; // x = --fe --dc --ba --98 --76 --54 --32 --10
-    x = (x ^ (x >> 2)) & 0x0f0f0f0f; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
-    x = (x ^ (x >> 4)) & 0x00ff00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
-    x = (x ^ (x >> 8)) & 0x0000ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
+    x &= 0x5555_5555; // x = -f-e -d-c -b-a -9-8 -7-6 -5-4 -3-2 -1-0
+    x = (x ^ (x >> 1)) & 0x3333_3333; // x = --fe --dc --ba --98 --76 --54 --32 --10
+    x = (x ^ (x >> 2)) & 0x0f0f_0f0f; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
+    x = (x ^ (x >> 4)) & 0x00ff_00ff; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
+    x = (x ^ (x >> 8)) & 0x0000_ffff; // x = ---- ---- ---- ---- fedc ba98 7654 3210
     x
 }
 
 // Decodes x part of 2d morton code.
 #[inline]
 pub fn decode_x_bitfiddle(morton: u32) -> u32 {
-    compact_1by1(morton >> 0)
+    compact_1by1(morton)
 }
 
 // Decodes y part of 2d morton code.
