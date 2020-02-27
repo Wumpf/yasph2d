@@ -58,9 +58,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let particles = &fluid_world.particles;
         alpha_values
             .par_iter_mut()
-            .enumerate()
             .zip(fluid_world.particles.positions.par_iter())
-            .for_each(|((i, alpha_value), &ri)| {
+            .enumerate()
+            .for_each(|(i, (alpha_value, &ri))| {
                 // self contribution is zero since gradient to self is zero
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum = Vector::zero();
@@ -100,10 +100,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let reference_density = fluid_world.properties.fluid_density();
         self.predicted_densities
             .par_iter_mut()
+            .zip(
+                (
+                    &fluid_world.particles.densities,
+                    &fluid_world.particles.positions,
+                    &self.predicted_velocities,
+                )
+                    .into_par_iter(),
+            )
             .enumerate()
-            .zip(fluid_world.particles.densities.par_iter())
-            .zip(fluid_world.particles.positions.par_iter().zip(predicted_velocities.par_iter()))
-            .for_each(|(((i, predicted_densitiy), &original_density), (&ri, &predicted_vi))| {
+            .for_each(|(i, (predicted_densitiy, (&original_density, &ri, &predicted_vi)))| {
                 let mut delta = 0.0; // gradient to self is zero.
                 let i = i as u32;
                 particles.foreach_neighbor_particle(
@@ -141,36 +147,39 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let inv_dt = 1.0 / dt;
         let kernel = &self.kernel;
 
-        self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-            let mut delta: Vector = Zero::zero(); // gradient to self is zero.
-            let ki = (predicted_densities[i] - reference_density) * alpha_values[i];
-            let ri = particles.positions[i];
+        self.predicted_velocities
+            .par_iter_mut()
+            .zip((&fluid_world.particles.positions, &self.predicted_densities, &self.alpha_values).into_par_iter())
+            .enumerate()
+            .for_each(|(i, (predicted_velocity, (&ri, predicted_density_i, alpha_i)))| {
+                let mut delta: Vector = Zero::zero(); // gradient to self is zero.
+                let ki = (predicted_density_i - reference_density) * alpha_i;
 
-            // compared to k values in paper already divided with density
-            // collapsing divition of dt² with multiply later -> divide delta with dt
+                // compared to k values in paper already divided with density
+                // collapsing divition of dt² with multiply later -> divide delta with dt
 
-            let i = i as u32;
-            particles.foreach_neighbor_particle(
-                i,
-                #[inline(always)]
-                |j| {
-                    let rj = particles.positions[j as usize];
-                    let kj = (predicted_densities[j as usize] - reference_density) * alpha_values[j as usize];
-                    delta += (ki + kj) * kernel.gradient_from_positions(ri, rj);
-                },
-            );
-            particles.foreach_neighbor_particle_boundary(
-                i,
-                #[inline(always)]
-                |j| {
-                    // compared to k values in paper already divided with density and multiplied with dt²!
-                    let rj = particles.boundary_particles[j as usize];
-                    delta += ki * kernel.gradient_from_positions(ri, rj);
-                },
-            );
+                let i = i as u32;
+                particles.foreach_neighbor_particle(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let rj = particles.positions[j as usize];
+                        let kj = (predicted_densities[j as usize] - reference_density) * alpha_values[j as usize];
+                        delta += (ki + kj) * kernel.gradient_from_positions(ri, rj);
+                    },
+                );
+                particles.foreach_neighbor_particle_boundary(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        // compared to k values in paper already divided with density and multiplied with dt²!
+                        let rj = particles.boundary_particles[j as usize];
+                        delta += ki * kernel.gradient_from_positions(ri, rj);
+                    },
+                );
 
-            *predicted_velocity -= inv_dt * delta * particle_mass;
-        });
+                *predicted_velocity -= inv_dt * delta * particle_mass;
+            });
     }
 
     fn correct_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld) {
@@ -249,32 +258,33 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             let viscosity_model = &self.viscosity_model;
             let force_to_particle_velocitychange = dt / particle_mass;
             let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
-            self.predicted_velocities.par_iter_mut().enumerate().for_each(|(i, predicted_velocity)| {
-                let vi = particles.velocities[i];
-                let ri = particles.positions[i];
+            self.predicted_velocities
+                .par_iter_mut()
+                .zip((&particles.positions, &particles.velocities).into_par_iter())
+                .enumerate()
+                .for_each(|(i, (predicted_velocity, (&ri, &vi)))| {
+                    // forces
+                    *predicted_velocity = non_pressure_velocitychange + vi;
 
-                // forces
-                *predicted_velocity = non_pressure_velocitychange + vi;
-
-                // viscosity
-                particles.foreach_neighbor_particle(
-                    i as u32,
-                    #[inline(always)]
-                    |j| {
-                        let j = j as usize;
-                        let r_sq = ri.distance2(particles.positions[j]);
-                        *predicted_velocity += dt
-                            * viscosity_model.compute_viscous_accelleration(
-                                dt,
-                                r_sq,
-                                r_sq.sqrt(),
-                                particle_mass,
-                                particles.densities[j],
-                                particles.velocities[j] - vi,
-                            );
-                    },
-                );
-            });
+                    // viscosity
+                    particles.foreach_neighbor_particle(
+                        i as u32,
+                        #[inline(always)]
+                        |j| {
+                            let j = j as usize;
+                            let r_sq = ri.distance2(particles.positions[j]);
+                            *predicted_velocity += dt
+                                * viscosity_model.compute_viscous_accelleration(
+                                    dt,
+                                    r_sq,
+                                    r_sq.sqrt(),
+                                    particle_mass,
+                                    particles.densities[j],
+                                    particles.velocities[j] - vi,
+                                );
+                        },
+                    );
+                });
         }
 
         // density correction loop

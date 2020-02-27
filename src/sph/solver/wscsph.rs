@@ -55,10 +55,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 
         self.accellerations
             .par_iter_mut()
+            .zip(
+                (
+                    &fluid_world.particles.velocities,
+                    &fluid_world.particles.positions,
+                    &fluid_world.particles.densities,
+                )
+                    .into_par_iter(),
+            )
             .enumerate()
-            .zip(fluid_world.particles.velocities.par_iter())
-            .zip(fluid_world.particles.positions.par_iter().zip(fluid_world.particles.densities.par_iter()))
-            .for_each(|(((i, accelleration), &vi), (&ri, &rhoi))| {
+            .for_each(|(i, (accelleration, (&vi, &ri, &rhoi)))| {
                 *accelleration = gravity;
 
                 let pi = Self::pressure(fluid_density, rhoi);
