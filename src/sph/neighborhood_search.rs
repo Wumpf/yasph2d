@@ -1,8 +1,10 @@
+use cgmath::prelude::*;
+use rayon::prelude::*;
+use std::cell::UnsafeCell;
+
 use super::appendbuffer::AppendBuffer;
 use super::scratch_buffer::ScratchBufferStore;
 use crate::units::*;
-
-use cgmath::prelude::*;
 
 pub type ParticleIndex = u32;
 pub type MortonCellIndex = u32;
@@ -253,16 +255,27 @@ impl CompactMortonCellGrid {
     }
 }
 
+// todo: Is there a way around this construct from hell?
+// We *know* every thread/task is writing a disjunct set of elements in this array.
+// But since size of these sets variies, it's really hard to convince the compiler of our guarantee.
+struct NeighborListRanges {
+    list: UnsafeCell<Vec<(u32, u32)>>,
+}
+unsafe impl Sync for NeighborListRanges {}
+unsafe impl Send for NeighborListRanges {}
+
 pub struct NeighborLists {
-    neighborhood_list_starts: Vec<u32>,
+    neighborhood_list_ranges: NeighborListRanges,
     neighborhood_lists: AppendBuffer<ParticleIndex>,
 }
 
 impl NeighborLists {
     fn new() -> NeighborLists {
         NeighborLists {
-            neighborhood_list_starts: Vec::with_capacity(1024),
-            neighborhood_lists: AppendBuffer::with_capacity(1024 * 32),
+            neighborhood_list_ranges: NeighborListRanges {
+                list: UnsafeCell::new(Vec::with_capacity(1024)),
+            },
+            neighborhood_lists: AppendBuffer::new(),
         }
     }
 
@@ -274,17 +287,21 @@ impl NeighborLists {
         neighbor_positions: &[Point],
         neighbor_cell_grid: &CompactMortonCellGrid,
     ) -> Result<usize, usize> {
-        self.neighborhood_list_starts.resize(positions.len() + 1, 0);
+        const MAX_NUM_NEIGHBORS: usize = 64; // todo: At least pretend to be scientific about this value.
+
+        unsafe {
+            (*self.neighborhood_list_ranges.list.get()).resize(positions.len() + 1, (0, 0));
+        }
         self.neighborhood_lists.clear();
+        self.neighborhood_lists.resize(positions.len() * MAX_NUM_NEIGHBORS); // TODO: Smaller. Needs we need to handle error on overflow.
         let radius_sq = grid.radius * grid.radius;
 
-        const MAX_NUM_NEIGHBORS: usize = 128; // todo: At least pretend to be scientific about this value.
-        let mut neighbor_set = [0; MAX_NUM_NEIGHBORS];
-
         // Look at cell pairs in the compact cell grid since next cell tells us how many particles are in the current.
-        for cell_slice in cell_grid.cells.windows(2) {
+        cell_grid.cells.par_windows(2).for_each(|cell_slice| {
             let current_cell = cell_slice[0];
             let next_cell = cell_slice[1];
+
+            let mut neighbor_set = [0; MAX_NUM_NEIGHBORS];
 
             // set of all potential neighbors
             let particle_runs = neighbor_cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
@@ -304,21 +321,22 @@ impl NeighborLists {
                             neighbor_set[num_neighbors] = j as u32;
                             num_neighbors += 1;
                             if num_neighbors == MAX_NUM_NEIGHBORS {
-                                //println!("particle has too many neighbors");
+                                println!("particle has too many neighbors");
                                 break 'neighbor_search;
                             }
                         }
                     }
                 }
 
-                // safe neighbors
+                // save neighbors
                 // todo: compress
-                self.neighborhood_list_starts[i] = self.neighborhood_lists.len() as u32;
-                self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors])?;
+                let neighborhood_list_offset = self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]).unwrap();
+                unsafe {
+                    *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i) =
+                        (neighborhood_list_offset as u32, (neighborhood_list_offset + num_neighbors) as u32);
+                }
             }
-        }
-
-        *self.neighborhood_list_starts.last_mut().unwrap() = self.neighborhood_lists.len() as u32;
+        });
 
         Ok(self.neighborhood_lists.len())
     }
@@ -351,11 +369,11 @@ impl NeighborLists {
     #[inline]
     pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex) -> ()) {
         unsafe {
-            let first = *self.neighborhood_list_starts.get_unchecked(particle as usize) as usize;
-            let last = *self.neighborhood_list_starts.get_unchecked((particle + 1) as usize) as usize;
+            let ranges = &*self.neighborhood_list_ranges.list.get();
+            let range = *ranges.get_unchecked(particle as usize);
             let neighborhood_lists = self.neighborhood_lists.as_slice();
-            for i in first..last {
-                f(*neighborhood_lists.get_unchecked(i));
+            for i in range.0..range.1 {
+                f(*neighborhood_lists.get_unchecked(i as usize));
             }
         }
     }

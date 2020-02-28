@@ -15,14 +15,22 @@ impl<T: Copy> AppendBuffer<T> {
         Layout::from_size_align(std::mem::size_of::<T>() * capacity, std::mem::align_of::<T>()).unwrap()
     }
 
-    pub fn with_capacity(capacity: usize) -> AppendBuffer<T> {
-        let allocation = unsafe { alloc::alloc(Self::buffer_layout(capacity)) };
+    pub fn new() -> AppendBuffer<T> {
         AppendBuffer {
-            capacity,
+            capacity: 0,
             size: AtomicUsize::new(0),
-            data: allocation.cast(),
+            data: std::ptr::null_mut(),
         }
     }
+
+    // pub fn with_capacity(capacity: usize) -> AppendBuffer<T> {
+    //     let allocation = unsafe { alloc::alloc(Self::buffer_layout(capacity)) };
+    //     AppendBuffer {
+    //         capacity,
+    //         size: AtomicUsize::new(0),
+    //         data: allocation.cast(),
+    //     }
+    // }
 
     pub fn as_slice(&self) -> &[T] {
         unsafe { std::slice::from_raw_parts(self.data, self.size.load(Ordering::Relaxed)) }
@@ -53,6 +61,9 @@ impl<T: Copy> AppendBuffer<T> {
     }
 
     pub fn resize(&mut self, capacity: usize) {
+        if self.capacity >= capacity {
+            return;
+        }
         self.capacity = capacity;
         unsafe {
             alloc::dealloc(self.data.cast(), Self::buffer_layout(self.capacity));
@@ -74,3 +85,4 @@ impl<T: Copy> Drop for AppendBuffer<T> {
 }
 
 unsafe impl<T: Copy> Sync for AppendBuffer<T> {}
+unsafe impl<T: Copy> Send for AppendBuffer<T> {}
