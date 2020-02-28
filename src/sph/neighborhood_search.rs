@@ -1,3 +1,4 @@
+use super::appendbuffer::AppendBuffer;
 use super::scratch_buffer::ScratchBufferStore;
 use crate::units::*;
 
@@ -252,24 +253,27 @@ impl CompactMortonCellGrid {
     }
 }
 
-#[derive(Default)]
 pub struct NeighborLists {
     neighborhood_list_starts: Vec<u32>,
-    neighborhood_lists: Vec<ParticleIndex>,
+    neighborhood_lists: AppendBuffer<ParticleIndex>,
 }
 
 impl NeighborLists {
-    fn update(
+    fn new() -> NeighborLists {
+        NeighborLists {
+            neighborhood_list_starts: Vec::with_capacity(1024),
+            neighborhood_lists: AppendBuffer::with_capacity(1024 * 32),
+        }
+    }
+
+    fn try_update(
         &mut self,
         grid: &GridProperties,
         positions: &[Point],
         cell_grid: &CompactMortonCellGrid,
         neighbor_positions: &[Point],
         neighbor_cell_grid: &CompactMortonCellGrid,
-    ) {
-        microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
-        assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
-
+    ) -> Result<usize, usize> {
         self.neighborhood_list_starts.resize(positions.len() + 1, 0);
         self.neighborhood_lists.clear();
         let radius_sq = grid.radius * grid.radius;
@@ -309,12 +313,39 @@ impl NeighborLists {
 
                 // safe neighbors
                 // todo: compress
-                // todo: Need a lockfree append buffer to be able to make things parallel
                 self.neighborhood_list_starts[i] = self.neighborhood_lists.len() as u32;
-                self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]);
+                self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors])?;
             }
         }
+
         *self.neighborhood_list_starts.last_mut().unwrap() = self.neighborhood_lists.len() as u32;
+
+        Ok(self.neighborhood_lists.len())
+    }
+
+    fn update(
+        &mut self,
+        grid: &GridProperties,
+        positions: &[Point],
+        cell_grid: &CompactMortonCellGrid,
+        neighbor_positions: &[Point],
+        neighbor_cell_grid: &CompactMortonCellGrid,
+    ) {
+        microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
+        assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
+
+        while self
+            .try_update(grid, positions, cell_grid, neighbor_positions, neighbor_cell_grid)
+            .is_err()
+        {
+            let new_capacity = self.neighborhood_lists.capacity() * 2;
+            println!(
+                "Neighbor list capacity was too small. Was {}, trying again with {}",
+                self.neighborhood_lists.capacity(),
+                new_capacity
+            );
+            self.neighborhood_lists.resize(new_capacity * 2)
+        }
     }
 
     #[inline]
@@ -322,8 +353,9 @@ impl NeighborLists {
         unsafe {
             let first = *self.neighborhood_list_starts.get_unchecked(particle as usize) as usize;
             let last = *self.neighborhood_list_starts.get_unchecked((particle + 1) as usize) as usize;
+            let neighborhood_lists = self.neighborhood_lists.as_slice();
             for i in first..last {
-                f(*self.neighborhood_lists.get_unchecked(i));
+                f(*neighborhood_lists.get_unchecked(i));
             }
         }
     }
@@ -363,8 +395,8 @@ impl NeighborhoodSearch {
             cellgrid_particles: Default::default(),
             cellgrid_boundary: Default::default(),
 
-            particle_particle_neighbors: NeighborLists::default(),
-            particle_boundary_neighbors: NeighborLists::default(),
+            particle_particle_neighbors: NeighborLists::new(),
+            particle_boundary_neighbors: NeighborLists::new(),
         }
     }
 

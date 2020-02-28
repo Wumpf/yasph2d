@@ -2,6 +2,7 @@ pub use self::fluidparticleworld::FluidParticleWorld;
 pub use self::solver::*;
 pub use self::viscositymodel::*;
 
+mod appendbuffer;
 mod fluidparticleworld;
 pub mod morton;
 pub mod neighborhood_search;
