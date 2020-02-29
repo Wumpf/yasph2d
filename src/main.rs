@@ -60,7 +60,7 @@ const REALTIME_TO_SIMTIME: f32 = 1.0;
 const NUM_DESIRED_SIM_UPDATES_PER_SECOND: u32 = 60 * 20;
 const SIM_TIME_STEP: Real = REALTIME_TO_SIMTIME / (NUM_DESIRED_SIM_UPDATES_PER_SECOND as Real);
 // Number of seconds simulation is allowed to process before slowing down physics time.
-const MAX_ALLOWED_SIM_PROCESSING_TIME: Real = 1.0 / 10.0; // if render takes 0 time this would result in min 10fps (since it doesn't, real min fps is lower)
+const MAX_ALLOWED_SIM_PROCESSING_TIME: Real = 1.0 / 15.0; // if render takes 0 time this would result in min 15fps (since it doesn't, real min fps is lower)
 
 fn clamp(v: f32, min: f32, max: f32) -> f32 {
     if v < min {
@@ -219,20 +219,21 @@ impl MainState {
         self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
         *current_time = Instant::now();
 
-        self.simulation_processing_time_frame = *current_time - time_step_start;
-        self.simulation_processing_time_total += self.simulation_processing_time_frame;
+        let step_time = *current_time - time_step_start;
+        self.simulation_processing_time_frame += step_time;
+        self.simulation_processing_time_total += step_time;
         self.simulation_realtime_total += Duration::from_secs_f64(SIM_TIME_STEP as f64);
         self.simulationstep_count_frame += 1;
 
         if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
             self.simulation_step_duration_history.pop_front();
         }
-        self.simulation_step_duration_history.push_back(self.simulation_processing_time_frame);
+        self.simulation_step_duration_history.push_back(step_time);
     }
 }
 
 impl EventHandler for MainState {
-    fn key_down_event(&mut self, ctx: &mut Context, keycode: KeyCode, _keymods: KeyMods, _repeat: bool) {
+    fn key_down_event(&mut self, ctx: &mut Context, keycode: KeyCode, _keymods: KeyMods, repeat: bool) {
         match keycode {
             KeyCode::Escape => {
                 ggez::event::quit(ctx);
@@ -246,12 +247,18 @@ impl EventHandler for MainState {
                 Self::reset_fluid(&mut self.fluid_world);
             }
             KeyCode::R => {
-                if !_repeat {
+                if !repeat {
                     self.update_mode = if self.update_mode == UpdateMode::RealTime {
                         UpdateMode::Recording
                     } else {
                         UpdateMode::RealTime
                     };
+                    // reset residual timer
+                    // todo: patch ggez to handle this better
+                    let pseudo_target_fps = (1.0 / timer::remaining_update_time(ctx).as_secs_f64()) as u32;
+                    if pseudo_target_fps > 0 {
+                        while timer::check_update_time(ctx, pseudo_target_fps) {}
+                    }
                 }
             }
             _ => {
@@ -264,22 +271,34 @@ impl EventHandler for MainState {
         microprofile::scope!("MainState", "update");
 
         self.simulationstep_count_frame = 0;
-
-        let mut current_time = Instant::now();
         self.simulation_processing_time_frame = Duration::from_secs(0);
-        while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
-            // if self.simulation_realtime_total > Duration::from_secs(2) {
-            //     break;
-            // }
 
-            self.single_sim_step(&mut current_time);
+        match self.update_mode {
+            UpdateMode::RealTime => {
+                let mut current_time = Instant::now();
+                while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
+                    // if self.simulation_realtime_total > Duration::from_secs(2) {
+                    //     break;
+                    // }
 
-            // If we can't process fast enough, consume the remaining residual time.
-            // I.e. we give up on getting physics-time on par to real time.
-            // If we would just break here, check_update_time will keep on trying to catch up!
-            if self.simulation_processing_time_frame.as_secs_f32() > MAX_ALLOWED_SIM_PROCESSING_TIME {
-                while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {}
-                break;
+                    self.single_sim_step(&mut current_time);
+
+                    // If we can't process fast enough, consume the remaining residual time.
+                    // I.e. we give up on getting physics-time on par to real time.
+                    // If we would just break here, check_update_time will keep on trying to catch up!
+                    if self.simulation_processing_time_frame.as_secs_f32() > MAX_ALLOWED_SIM_PROCESSING_TIME {
+                        while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {}
+                        break;
+                    }
+                }
+            }
+
+            UpdateMode::Recording => {
+                const RECORDING_FPS: u32 = 60;
+                let mut current_time = Instant::now();
+                for _ in 0..(NUM_DESIRED_SIM_UPDATES_PER_SECOND / RECORDING_FPS) {
+                    self.single_sim_step(&mut current_time);
+                }
             }
         }
 
