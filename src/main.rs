@@ -16,7 +16,12 @@ use microprofile;
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("YaSPH2D", "AndreasR")
-        .window_setup(conf::WindowSetup::default().title("YaSPH2D").samples(conf::NumSamples::Eight).vsync(false))
+        .window_setup(
+            conf::WindowSetup::default()
+                .title("YaSPH2D")
+                .samples(conf::NumSamples::Eight)
+                .vsync(false),
+        )
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
     let (ctx, event_loop) = &mut context_builder.build()?;
     let state = &mut MainState::new(ctx);
@@ -48,7 +53,7 @@ impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut fluid_world = FluidParticleWorld::new(
             2.0,    // smoothing factor
-            2500.0, // #particles/m²
+            5000.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         Self::reset_fluid(&mut fluid_world);
@@ -75,7 +80,7 @@ impl MainState {
             fluid_world,
             sph_solver: Box::new(sph_solver),
 
-            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 1.7, 1.6)),
+            camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 2.1, 1.6)),
             particle_mesh,
 
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
@@ -91,10 +96,12 @@ impl MainState {
         fluid_world.remove_all_fluid_particles();
         fluid_world.remove_all_boundary_particles();
 
-        fluid_world.add_fluid_rect(&Rect::new(0.1, 0.1, 0.5, 0.8), 0.05);
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(1.5, 0.0));
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 1.5));
-        fluid_world.add_boundary_line(Point::new(1.5, 0.0), Point::new(1.5, 1.5));
+        fluid_world.add_fluid_rect(&Rect::new(0.1, 0.7, 0.5, 1.0), 0.05);
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(2.0, 0.0));
+        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 2.5));
+        fluid_world.add_boundary_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5));
+
+        fluid_world.add_boundary_line(Point::new(0.0, 0.6), Point::new(1.75, 0.5));
     }
 }
 
@@ -142,9 +149,9 @@ impl EventHandler for MainState {
         while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
             let time_step_start = current_time;
 
-            //if self.total_simulation_time > Duration::from_secs(1) {
-            //    break;
-            //}
+            // if self.total_simulation_time > Duration::from_secs(2) {
+            //     break;
+            // }
 
             self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
             current_time = Instant::now();
