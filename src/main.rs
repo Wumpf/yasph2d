@@ -334,8 +334,16 @@ impl EventHandler for MainState {
         if self.update_mode == UpdateMode::Recording {
             microprofile::scope!("MainState", "screenshot");
             ggez::filesystem::create_dir(ctx, "/recording")?;
-            let img = graphics::screenshot(ctx).expect("Could not take screenshot");
-            img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter)).expect("Could not save screenshot");
+            let img;
+            {
+                microprofile::scope!("MainState", "gpu transfer");
+                img = graphics::screenshot(ctx).expect("Could not take screenshot");
+            }
+            {
+                // todo: this png encoder/writer here is slow. have something faster.
+                microprofile::scope!("MainState", "save as png");
+                img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter)).expect("Could not save screenshot");
+            }
         }
         self.frame_counter += 1;
 
