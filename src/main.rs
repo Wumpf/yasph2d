@@ -17,7 +17,7 @@ fn main() -> GameResult {
         .window_setup(
             conf::WindowSetup::default()
                 .title("YaSPH2D")
-                .samples(conf::NumSamples::Eight)
+                //.samples(conf::NumSamples::Eight) // https://github.com/ggez/ggez/issues/751
                 .vsync(false),
         )
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
@@ -52,6 +52,8 @@ struct MainState {
     simulation_starttime: Instant,
     simulation_realtime_total: Duration,
     simulation_processing_time_total: Duration,
+
+    frame_counter: usize,
 }
 
 const SIMULATION_STEP_HISTORY_LENGTH: usize = 80;
@@ -123,6 +125,8 @@ impl MainState {
             simulation_starttime: Instant::now(),
             simulation_realtime_total: Default::default(),
             simulation_processing_time_total: Default::default(),
+
+            frame_counter: 0,
         }
     }
 
@@ -230,6 +234,22 @@ impl MainState {
         }
         self.simulation_step_duration_history.push_back(step_time);
     }
+
+    fn reset_simulation(&mut self, ctx: &mut Context) {
+        self.sph_solver.clear_cached_data(); // todo: this is super meh
+        self.simulation_starttime = Instant::now();
+        self.simulation_realtime_total = Default::default();
+        self.simulation_processing_time_total = Default::default();
+        self.frame_counter = 0;
+        Self::reset_fluid(&mut self.fluid_world);
+
+        // reset residual timer
+        // todo: patch ggez to handle this better
+        let pseudo_target_fps = (1.0 / timer::remaining_update_time(ctx).as_secs_f64()) as u32;
+        if pseudo_target_fps > 0 {
+            while timer::check_update_time(ctx, pseudo_target_fps) {}
+        }
+    }
 }
 
 impl EventHandler for MainState {
@@ -238,13 +258,8 @@ impl EventHandler for MainState {
             KeyCode::Escape => {
                 ggez::event::quit(ctx);
             }
-
             KeyCode::Space => {
-                self.sph_solver.clear_cached_data(); // todo: this is super meh
-                self.simulation_starttime = Instant::now();
-                self.simulation_realtime_total = Default::default();
-                self.simulation_processing_time_total = Default::default();
-                Self::reset_fluid(&mut self.fluid_world);
+                self.reset_simulation(ctx);
             }
             KeyCode::R => {
                 if !repeat {
@@ -253,12 +268,7 @@ impl EventHandler for MainState {
                     } else {
                         UpdateMode::RealTime
                     };
-                    // reset residual timer
-                    // todo: patch ggez to handle this better
-                    let pseudo_target_fps = (1.0 / timer::remaining_update_time(ctx).as_secs_f64()) as u32;
-                    if pseudo_target_fps > 0 {
-                        while timer::check_update_time(ctx, pseudo_target_fps) {}
-                    }
+                    self.reset_simulation(ctx);
                 }
             }
             _ => {
@@ -320,6 +330,14 @@ impl EventHandler for MainState {
             microprofile::scope!("MainState", "present");
             graphics::present(ctx)?;
         }
+
+        if self.update_mode == UpdateMode::Recording {
+            microprofile::scope!("MainState", "screenshot");
+            ggez::filesystem::create_dir(ctx, "/recording")?;
+            let img = graphics::screenshot(ctx).expect("Could not take screenshot");
+            img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter)).expect("Could not save screenshot");
+        }
+        self.frame_counter += 1;
 
         Ok(())
     }
