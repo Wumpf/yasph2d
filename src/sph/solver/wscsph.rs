@@ -1,4 +1,4 @@
-use super::super::fluidparticleworld::{FluidParticleWorld, ConstantFluidProperties};
+use super::super::fluidparticleworld::{ConstantFluidProperties, FluidParticleWorld};
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
@@ -22,7 +22,7 @@ pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
 }
 
 // γ is hardcoded to 7 as propsed in the paper
-const TAIT_EQUATION_GAMMA:i32 = 7;
+const TAIT_EQUATION_GAMMA: i32 = 7;
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
     #[allow(dead_code)]
@@ -46,7 +46,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
     pub fn set_compressibility(&mut self, fluid_properties: &ConstantFluidProperties, target_density_variation: Real, expected_max_flow_speed: Real) {
         // real speed of sound of the fluid is usually higher, but this makes our timesteps way too small
         let speed_of_sound = expected_max_flow_speed / target_density_variation.sqrt();
-        self.pressure_factor = fluid_properties.fluid_density() * speed_of_sound * speed_of_sound / TAIT_EQUATION_GAMMA as Real; 
+        self.pressure_factor = fluid_properties.fluid_density() * speed_of_sound * speed_of_sound / TAIT_EQUATION_GAMMA as Real;
     }
 
     // Equation of State (EOS)
@@ -140,6 +140,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         // https://en.wikipedia.org/wiki/Leapfrog_integration
         {
             microprofile::scope!("WCSPHSolver", "leap frog 1");
+
+            // This got actually slower for a parallel for loop when used with 2500 particles (too few? or is rayon doing something stupid?)
+            /*
+            fluid_world
+                .particles
+                .positions
+                .par_iter_mut()
+                .zip(fluid_world.particles.velocities.par_iter_mut())
+                .zip(self.accellerations.par_iter())
+                .for_each(|((pos, v), a)| {
+            */
+
             for ((pos, v), a) in fluid_world
                 .particles
                 .positions
@@ -161,6 +173,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
 
         // part 2 of leap frog integration. Finish updating velocity.
         {
+            // Again, this got slower with rayon
+            /*fluid_world
+            .particles
+            .velocities
+            .par_iter_mut()
+            .zip(self.accellerations.par_iter())
+            .for_each(|(v, a)| {
+                *v += 0.5 * dt * a;
+            });*/
+
             microprofile::scope!("WCSPHSolver", "leap frog 2");
             for (v, a) in fluid_world.particles.velocities.iter_mut().zip(self.accellerations.iter()) {
                 *v += 0.5 * dt * a;
