@@ -74,16 +74,16 @@ impl ConstantFluidProperties {
         self.fluid_density / self.particle_density
     }
 
+    fn num_particles_per_meter(&self) -> Real {
+        self.particle_density.sqrt()
+    }
+
     fn particle_radius_from_particle_density(particle_density: Real) -> Real {
         // density is per m²
         0.5 / particle_density.sqrt()
     }
 
-    fn num_particles_per_meter(&self) -> Real {
-        self.particle_density.sqrt()
-    }
-
-    pub fn suggested_particle_render_radius(&self) -> Real {
+    pub fn particle_radius(&self) -> Real {
         Self::particle_radius_from_particle_density(self.particle_density)
     }
 }

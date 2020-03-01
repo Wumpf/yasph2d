@@ -1,6 +1,7 @@
 use super::super::fluidparticleworld::{ConstantFluidProperties, FluidParticleWorld};
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
+use super::super::timemanager::TimeManager;
 use super::super::viscositymodel::ViscosityModel;
 use super::Solver;
 use crate::units::*;
@@ -132,9 +133,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         self.accellerations.clear();
     }
 
-    fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+    fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, time_manager: &mut TimeManager) {
         microprofile::scope!("WCSPHSolver", "simulation_step");
         self.accellerations.resize(fluid_world.particles.positions.len(), cgmath::Zero::zero());
+
+        // update timestep. TODO: Support dynamic timestep
+        time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, 9999999.0);
+        let dt = time_manager.timestep();
 
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
@@ -188,5 +193,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
                 *v += 0.5 * dt * a;
             }
         }
+
+        // todo: is this actually correct with leap frog?
+        time_manager.update_time();
     }
 }

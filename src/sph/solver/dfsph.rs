@@ -1,6 +1,7 @@
 use super::super::fluidparticleworld::FluidParticleWorld;
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
+use super::super::timemanager::TimeManager;
 use super::super::viscositymodel::ViscosityModel;
 use super::Solver;
 use crate::units::*;
@@ -227,7 +228,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         self.predicted_densities.clear();
     }
 
-    fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, dt: Real) {
+    fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, time_manager: &mut TimeManager) {
         microprofile::scope!("DFSPHSolver", "simulation_step");
 
         // ensure densities and alpha factors were initialized previously ("warmup")
@@ -246,8 +247,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         // compute non-pressure forces (from scratch)
         let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.properties.particle_mass();
 
-        // (optional) adapt timestep using CFL condition
-        // todo
+        // update timestep. TODO: Support dynamic timestep
+        time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, 9999999.0);
+        let dt = time_manager.timestep();
 
         // compute velocity prediction
         {
@@ -302,6 +304,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                 .for_each(|(position, predicted_velocity)| {
                     *position += predicted_velocity * dt;
                 });
+            time_manager.update_time();
         }
         // only attribute other than position that we need going forward is predicted velocities!
         fluid_world.update_neighborhood_datastructure(vec![&mut self.predicted_velocities], Vec::new());

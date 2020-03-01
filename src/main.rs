@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 mod camera;
 
 use camera::*;
-use yasph2d::sph::*;
+use yasph2d::sph;
 use yasph2d::units::*;
 
 fn main() -> GameResult {
@@ -39,8 +39,9 @@ enum UpdateMode {
 struct MainState {
     update_mode: UpdateMode,
 
-    fluid_world: FluidParticleWorld,
-    sph_solver: Box<dyn Solver>,
+    fluid_world: sph::FluidParticleWorld,
+    time_manager: sph::TimeManager,
+    sph_solver: Box<dyn sph::Solver>,
 
     camera: Camera,
     particle_mesh: graphics::Mesh,
@@ -50,7 +51,6 @@ struct MainState {
     simulationstep_count_frame: u32,
 
     simulation_starttime: Instant,
-    simulation_realtime_total: Duration,
     simulation_processing_time_total: Duration,
 
     frame_counter: usize,
@@ -85,21 +85,21 @@ fn heatmap_color(t: f32) -> graphics::Color {
 
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
-        let mut fluid_world = FluidParticleWorld::new(
+        let mut fluid_world = sph::FluidParticleWorld::new(
             2.0,    // smoothing factor
             5000.0, // #particles/m²
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         Self::reset_fluid(&mut fluid_world);
-        let xsph = XSPHViscosityModel::new(fluid_world.properties.smoothing_length());
+        let xsph = sph::XSPHViscosityModel::new(fluid_world.properties.smoothing_length());
         //xsph.epsilon = 0.1;
-        let mut physicalviscosity = PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
+        let mut physicalviscosity = sph::PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
 
-        //let sph_solver = WCSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
+        //let sph_solver = sph::WCSPHSolver::new(xsph, &fluid_world.properties);
         let sph_solver = DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
 
-        let particle_radius = fluid_world.properties.suggested_particle_render_radius();
+        let particle_radius = fluid_world.properties.particle_radius();
         let particle_mesh = graphics::Mesh::new_circle(
             ctx,
             graphics::DrawMode::fill(),
@@ -113,6 +113,7 @@ impl MainState {
         MainState {
             update_mode: UpdateMode::RealTime,
             fluid_world,
+            time_manager: sph::TimeManager::new(sph::TimeManagerConfiguration::FixedTimeStep(SIM_TIME_STEP)),
             sph_solver: Box::new(sph_solver),
 
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 2.1, 1.6)),
@@ -123,14 +124,13 @@ impl MainState {
             simulationstep_count_frame: 0,
 
             simulation_starttime: Instant::now(),
-            simulation_realtime_total: Default::default(),
             simulation_processing_time_total: Default::default(),
 
             frame_counter: 0,
         }
     }
 
-    fn reset_fluid(fluid_world: &mut FluidParticleWorld) {
+    fn reset_fluid(fluid_world: &mut sph::FluidParticleWorld) {
         fluid_world.remove_all_fluid_particles();
         fluid_world.remove_all_boundary_particles();
 
@@ -150,18 +150,18 @@ impl MainState {
             self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
 
         let simulation_info_text = format!(
-            "Sim duration: {:3.2}ms ({:4} steps)| Single Step (averaged over {}): {:.2}ms\nTotal Simulated Time {:.2}\nTotal Processing Time {:.2}",
+            "Frame Processing: {:3.2}ms ({:4} steps)| Single Step (averaged over {}): {:.2}ms\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
             self.simulation_processing_time_frame.as_secs_f64() * 1000.0,
             self.simulationstep_count_frame,
             self.simulation_step_duration_history.len(),
             average_simulation_step_duration.as_secs_f64() * 1000.0,
-            self.simulation_realtime_total.as_secs_f64(),
+            self.time_manager.passed_time(),
             self.simulation_processing_time_total.as_secs_f64(),
         );
 
         let fps_display = graphics::Text::new(match self.update_mode {
             UpdateMode::RealTime => format!(
-                "{:3.2}ms, FPS: {:3.2}, passed time {:.2}s\n{}",
+                "{:3.2}ms, FPS: {:3.2}, time since sim start {:.2}s\n\n{}",
                 1000.0 / fps,
                 fps,
                 (Instant::now() - self.simulation_starttime).as_secs_f64(),
@@ -176,7 +176,7 @@ impl MainState {
             graphics::draw(
                 ctx,
                 &graphics::Text::new("REALTIME OFF (max sim processing time hit)"),
-                (RenderPoint::new(10.0, 70.0), graphics::Color::new(1.0, 0.2, 0.2, 1.0)),
+                (RenderPoint::new(10.0, 150.0), graphics::Color::new(1.0, 0.2, 0.2, 1.0)),
             )?;
         }
 
@@ -220,13 +220,12 @@ impl MainState {
     fn single_sim_step(&mut self, current_time: &mut Instant) {
         let time_step_start = *current_time;
 
-        self.sph_solver.simulation_step(&mut self.fluid_world, SIM_TIME_STEP);
+        self.sph_solver.simulation_step(&mut self.fluid_world, &mut self.time_manager);
         *current_time = Instant::now();
 
         let step_time = *current_time - time_step_start;
         self.simulation_processing_time_frame += step_time;
         self.simulation_processing_time_total += step_time;
-        self.simulation_realtime_total += Duration::from_secs_f64(SIM_TIME_STEP as f64);
         self.simulationstep_count_frame += 1;
 
         if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
@@ -238,9 +237,9 @@ impl MainState {
     fn reset_simulation(&mut self, ctx: &mut Context) {
         self.sph_solver.clear_cached_data(); // todo: this is super meh
         self.simulation_starttime = Instant::now();
-        self.simulation_realtime_total = Default::default();
         self.simulation_processing_time_total = Default::default();
         self.frame_counter = 0;
+        self.time_manager.restart();
         Self::reset_fluid(&mut self.fluid_world);
 
         // reset residual timer
@@ -287,9 +286,9 @@ impl EventHandler for MainState {
             UpdateMode::RealTime => {
                 let mut current_time = Instant::now();
                 while timer::check_update_time(ctx, NUM_DESIRED_SIM_UPDATES_PER_SECOND) {
-                    // if self.simulation_realtime_total > Duration::from_secs(2) {
-                    //     break;
-                    // }
+                    if self.time_manager.passed_time() > 2.0 {
+                        break;
+                    }
 
                     self.single_sim_step(&mut current_time);
 
@@ -342,7 +341,8 @@ impl EventHandler for MainState {
             {
                 // todo: this png encoder/writer here is slow. have something faster.
                 microprofile::scope!("MainState", "save as png");
-                img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter)).expect("Could not save screenshot");
+                img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter))
+                    .expect("Could not save screenshot");
             }
         }
         self.frame_counter += 1;
