@@ -1,4 +1,4 @@
-use super::super::fluidparticleworld::FluidParticleWorld;
+use super::super::fluidparticleworld::{FluidParticleWorld, ConstantFluidProperties};
 use super::super::smoothing_kernel;
 use super::super::smoothing_kernel::Kernel;
 use super::super::viscositymodel::ViscosityModel;
@@ -7,35 +7,52 @@ use crate::units::*;
 use cgmath::prelude::*;
 use rayon::prelude::*;
 
-// Solver LOOSELY based on Becker & Teschner 2007 WCSPH07
+// Solver based on Becker & Teschner 2007 WCSPH07
+// No surface tension implemented
 // https://cg.informatik.uni-freiburg.de/publications/2007_SCA_SPH.pdf
 pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
     viscosity_model: TViscosityModel,
     density_kernel: smoothing_kernel::Poly6,
     pressure_kernel: smoothing_kernel::Spiky,
     boundary_force_factor: Real,
+    pressure_factor: Real, // denoted as B. B = density0 * speed_of_sound * speed_of_sound / γ.
 
     // recomputed every frame, but need previous frame due to leap frog iteration scheme
     accellerations: Vec<Vector>,
 }
+
+// γ is hardcoded to 7 as propsed in the paper
+const TAIT_EQUATION_GAMMA:i32 = 7;
+
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
     #[allow(dead_code)]
-    pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> WCSPHSolver<TViscosityModel> {
-        WCSPHSolver {
+    pub fn new(viscosity_model: TViscosityModel, fluid_properties: &ConstantFluidProperties) -> WCSPHSolver<TViscosityModel> {
+        let mut solver = WCSPHSolver {
             viscosity_model,
-            density_kernel: smoothing_kernel::Poly6::new(smoothing_length),
-            pressure_kernel: smoothing_kernel::Spiky::new(smoothing_length),
-            boundary_force_factor: 10.0, // (expected accelleration) / (spacing ratio of boundary / normal particles)
+            density_kernel: smoothing_kernel::Poly6::new(fluid_properties.smoothing_length()),
+            pressure_kernel: smoothing_kernel::Spiky::new(fluid_properties.smoothing_length()),
+            boundary_force_factor: 0.5, // (expected accelleration * initial water depth) / (spacing ratio of boundary / normal particles). Arbitrary value right now.
+            pressure_factor: 1.0,
             accellerations: Vec::new(),
-        }
+        };
+        // set a good default for compressibility
+        solver.set_compressibility(fluid_properties, 0.01, 1.0);
+
+        solver
+    }
+
+    // target_density_variation:    density variation, denoted as η in the paper. defaults to 1%==0.01
+    // expected_max_flow_speed:     expected speed of the fluid in m/s. possible estimate is sqrt(2 * gravity * falling_height)
+    pub fn set_compressibility(&mut self, fluid_properties: &ConstantFluidProperties, target_density_variation: Real, expected_max_flow_speed: Real) {
+        // real speed of sound of the fluid is usually higher, but this makes our timesteps way too small
+        let speed_of_sound = expected_max_flow_speed / target_density_variation.sqrt();
+        self.pressure_factor = fluid_properties.fluid_density() * speed_of_sound * speed_of_sound / TAIT_EQUATION_GAMMA as Real; 
     }
 
     // Equation of State (EOS)
-    fn pressure(fluid_density: Real, local_density: Real) -> Real {
-        // Isothermal gas (== Tait equation for water-like fluids with gamma 1)
-        //self.fluid_speedofsound_sq * (local_density - self.fluid_density)
+    fn pressure(pressure_factor: Real, fluid_density: Real, local_density: Real) -> Real {
         // Tait equation as in Becker & Teschner 2007 WCSPH07
-        100.0 * ((local_density / fluid_density).powi(7) - 1.0) // 2.0 is a hack
+        pressure_factor * ((local_density / fluid_density).powi(TAIT_EQUATION_GAMMA) - 1.0)
     }
 
     fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
@@ -52,6 +69,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         let boundary_force_factor = self.boundary_force_factor;
         let viscosity_model = &self.viscosity_model;
         let gravity = fluid_world.gravity;
+        let pressure_factor = self.pressure_factor;
 
         self.accellerations
             .par_iter_mut()
@@ -67,7 +85,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             .for_each(|(i, (accelleration, (&vi, &ri, &rhoi)))| {
                 *accelleration = gravity;
 
-                let pi = Self::pressure(fluid_density, rhoi);
+                let pi = Self::pressure(pressure_factor, fluid_density, rhoi);
                 let i = i as u32;
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
@@ -77,7 +95,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                     |j| {
                         let j = j as usize;
                         let rhoj = particles.densities[j];
-                        let pj = Self::pressure(fluid_density, rhoj);
+                        let pj = Self::pressure(pressure_factor, fluid_density, rhoj);
                         let ri_to_rj = particles.positions[j] - ri;
                         let r_sq = ri_to_rj.magnitude2();
                         let r = r_sq.sqrt();

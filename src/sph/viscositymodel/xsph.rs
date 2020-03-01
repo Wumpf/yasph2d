@@ -5,7 +5,7 @@ use crate::units::*;
 
 // XSPH as in "Ghost SPH for Animating Water", Schechter et al. (https://www.cs.ubc.ca/~rbridson/docs/schechter-siggraph2012-ghostsph.pdf)
 pub struct XSPHViscosityModel {
-    pub epsilon: Real, // 0.05
+    pub epsilon: Real, // default 0.05
     kernel: Poly6,
 }
 impl XSPHViscosityModel {
