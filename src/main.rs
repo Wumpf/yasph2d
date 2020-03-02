@@ -52,7 +52,6 @@ struct MainState {
 
     simulation_starttime: Instant,
     simulation_processing_time_total: Duration,
-    simulation_to_realtime_offset_grew: bool,
     simulation_to_realtime_offset: f32, // Starts out with 0 and grows if we spend too much time on processing the simulation
 
     frame_counter: usize,
@@ -67,6 +66,7 @@ const TARGET_FPS: Real = 60.0;
 // Note that this measure avoid the "well of despair" (as dubbed by https://docs.nvidia.com/gameworks/content/gameworkslibrary/physx/guide/Manual/BestPractices.html)
 // where we need to do more physics step to catch up, but by doing so take even longer to catch up.
 const TARGET_FPS_MIN: Real = 10.0;
+const TARGET_MAX_PROCESSING_TIME: Real = 1.0 / TARGET_FPS_MIN;
 
 // Desired relationship between time in reality and time in simulation. In other word, "speed factor"
 // (that is, if we simulation processing time is low enough, otherwise simulation will slow down regardless)
@@ -143,7 +143,6 @@ impl MainState {
 
             simulation_starttime: Instant::now(),
             simulation_processing_time_total: Default::default(),
-            simulation_to_realtime_offset_grew: false,
             simulation_to_realtime_offset: Default::default(),
 
             frame_counter: 0,
@@ -191,7 +190,7 @@ impl MainState {
             UpdateMode::Recording => format!("RECORDING\n{}", simulation_info_text,),
         });
         graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
-        if self.simulation_to_realtime_offset_grew {
+        if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME && self.update_mode == UpdateMode::RealTime {
             graphics::draw(
                 ctx,
                 &graphics::Text::new("REALTIME OFF - simulation time can not keep up with real time"),
@@ -252,23 +251,15 @@ impl MainState {
         self.simulation_step_duration_history.push_back(step_processing_time);
     }
 
-    fn reset_simulation(&mut self, ctx: &mut Context) {
+    fn reset_simulation(&mut self) {
         self.sph_solver.clear_cached_data(); // todo: this is super meh
         self.simulation_starttime = Instant::now();
-        self.simulation_to_realtime_offset_grew = true;
         self.simulation_to_realtime_offset = 0.0;
         self.simulation_processing_time_total = Default::default();
 
         self.frame_counter = 0;
         self.time_manager.restart();
         Self::reset_fluid(&mut self.fluid_world);
-
-        // reset residual timer
-        // todo: patch ggez to handle this better
-        let pseudo_target_fps = (1.0 / timer::remaining_update_time(ctx).as_secs_f64()) as u32;
-        if pseudo_target_fps > 0 {
-            while timer::check_update_time(ctx, pseudo_target_fps) {}
-        }
     }
 }
 
@@ -279,7 +270,7 @@ impl EventHandler for MainState {
                 ggez::event::quit(ctx);
             }
             KeyCode::Space => {
-                self.reset_simulation(ctx);
+                self.reset_simulation();
             }
             KeyCode::R => {
                 if !repeat {
@@ -288,7 +279,7 @@ impl EventHandler for MainState {
                     } else {
                         UpdateMode::RealTime
                     };
-                    self.reset_simulation(ctx);
+                    self.reset_simulation();
                 }
             }
             _ => {
@@ -302,27 +293,20 @@ impl EventHandler for MainState {
 
         self.simulationstep_count_frame = 0;
         self.simulation_processing_time_frame = Duration::from_secs(0);
-        self.simulation_to_realtime_offset_grew = false;
 
         match self.update_mode {
             UpdateMode::RealTime => {
                 // Note that we _could_ influence the simulation timestep target every frame depending on the delta frame time.
                 // However, that would make our simulation dependend on external, non-deterministic factors and we don't want that.
-                if let sph::TimeManagerConfiguration::AdaptiveTimeStep {
-                    timestep_max: _,
-                    timestep_min: _,
-                    timestep_target_frame,
-                    cfl_factor: _,
-                } = self.time_manager.config_mut()
-                {
+                if let sph::TimeManagerConfiguration::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
                     *timestep_target_frame = sph::AdaptiveTimeStepTarget::None;
                 }
 
-                let target_simulation_time = (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
+                let target_simulation_time =
+                    (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
                 while self.time_manager.passed_time() < target_simulation_time {
                     // If we can't process fast enough, we give up and accept that there is an offset between realtime and simulation time.
-                    if self.simulation_processing_time_frame.as_secs_f32() > 1.0 / TARGET_FPS_MIN {
-                        self.simulation_to_realtime_offset_grew = true;
+                    if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME {
                         self.simulation_to_realtime_offset += target_simulation_time - self.time_manager.passed_time();
                         break;
                     }
@@ -331,18 +315,19 @@ impl EventHandler for MainState {
                 }
             }
             UpdateMode::Recording => {
-                let epsilon = if let sph::TimeManagerConfiguration::AdaptiveTimeStep {
-                    timestep_max: _,
+                // When doing recording, we want to hit the exact frame times.
+                let epsilon;
+                if let sph::TimeManagerConfiguration::AdaptiveTimeStep {
                     timestep_min,
                     timestep_target_frame,
-                    cfl_factor: _,
+                    ..
                 } = self.time_manager.config_mut()
                 {
                     *timestep_target_frame = sph::AdaptiveTimeStepTarget::TargetFrameLength(TARGET_FRAME_SIMDURATION);
-                    *timestep_min * 0.5
+                    epsilon = *timestep_min * 0.5;
                 } else {
-                    1.0e-9
-                };
+                    epsilon = 1.0e-9;
+                }
                 let target_simulation_time = self.time_manager.passed_time() + TARGET_FRAME_SIMDURATION - epsilon;
                 while self.time_manager.passed_time() < target_simulation_time {
                     self.single_sim_step();

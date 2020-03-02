@@ -54,7 +54,7 @@ impl<T: Copy> AppendBuffer<T> {
         }
 
         unsafe {
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.data.offset(previous_size as isize), slice.len());
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.data.add(previous_size), slice.len());
         }
 
         Ok(previous_size)
