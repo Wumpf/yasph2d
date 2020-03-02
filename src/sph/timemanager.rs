@@ -1,14 +1,39 @@
 use crate::units::*;
 
-pub struct AdpativeTimeStep {
-    pub timestep_min: Real,
-    pub timestep_max: Real,
-    pub cfl_factor: Real,
+pub enum AdaptiveTimeStepTarget {
+    None,
+
+    // Multiple of total simulated time that the simulation tries to reach.
+    //
+    // Example: If TargetFrameLength is 1.0 and adaptive stepping yielded 0.9, then the next step will be 0.1 in order to reach the stepping target.
+    // Otherwise, we may overshoot all the way to t=1.9 if the next step hits the maximum target. This yields to variable intervals between observable simulation states (==frames)
+    // -> This is useful if we want to reach exact specific time intervals.
+    //
+    // Note: This sounds like an arcane concept but I actually found an instance of it in PySPH, called "final time"
+    // https://pysph.readthedocs.io/en/latest/reference/solver.html
+    TargetFrameLength(Real),
 }
 
 pub enum TimeManagerConfiguration {
     FixedTimeStep(Real),
-    //    AdaptiveTimeStep(AdpativeTimeStep),
+
+    // Adjusts the timestep dynamically depending on the simulations needs.
+    // (short steps if there is fast moving objects, long steps if objects are moving slowly)
+    AdaptiveTimeStep {
+        // Maximum time the simulation will advance in one step.
+        timestep_max: Real,
+
+        // Minimum time the simulation will advance, independent of CFL condition.
+        // (necessary to avoid infinite stepping for few fast objects)
+        // Timestep will not go under this value, even if AdaptiveTimeStepTarget::TargetFrameLength is used.
+        timestep_min: Real,
+
+        // Optionally further governs the timestep.
+        timestep_target_frame: AdaptiveTimeStepTarget,
+
+        // Factor for CFL estimation. Values above 1 mean that we will use a larger timestep than CFL condition dictates.
+        cfl_factor: Real,
+    },
 }
 
 // All timing values in seconds
@@ -42,20 +67,36 @@ impl TimeManager {
         self.timestep
     }
 
-    pub(super) fn update_timestep(&mut self, _particle_diameter: Real, _max_velocity: Real) {
+    pub fn config(&self) -> &TimeManagerConfiguration {
+        &self.config
+    }
+
+    pub fn config_mut(&mut self) -> &mut TimeManagerConfiguration {
+        &mut self.config
+    }
+
+    pub(super) fn update_timestep(&mut self, particle_diameter: Real, max_velocity: Real) {
         self.timestep = match &self.config {
             TimeManagerConfiguration::FixedTimeStep(timestep) => *timestep,
-            // Evaluates Courant–Friedrichs–Lewy (CFL) condition for the solver if any, loose timestep recommendation otherwise.
-            // TimeManagerConfiguration::AdaptiveTimeStep(adaptive_config) => Real::min(
-            //     adaptive_config.timestep_max,
-            //     Real::min(
-            //         adaptive_config.timestep_min,
-            //         adaptive_config.cfl_factor * 0.4 * particle_diameter / max_velocity,
-            //     ),
-            // ),
+
+            TimeManagerConfiguration::AdaptiveTimeStep {
+                timestep_max,
+                timestep_min,
+                timestep_target_frame,
+                cfl_factor,
+            } => {
+                let time_cfl = cfl_factor * 0.4 * particle_diameter / max_velocity; // Evaluates Courant–Friedrichs–Lewy (CFL) condition
+                if let AdaptiveTimeStepTarget::TargetFrameLength(timestep_target) = timestep_target_frame {
+                    let time_to_target = timestep_target - self.passed_time % timestep_target;
+                    timestep_min.max(timestep_max.min(time_cfl).min(time_to_target))
+                } else {
+                    timestep_min.max(timestep_max.min(time_cfl))
+                }
+            }
         }
     }
 
+    // updates time with the current timestep
     pub(super) fn update_time(&mut self) {
         self.passed_time += self.timestep;
     }
