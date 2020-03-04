@@ -45,16 +45,21 @@ pub struct TimeManager {
 
 impl TimeManager {
     pub fn new(config: TimeManagerConfiguration) -> TimeManager {
-        TimeManager {
+        let mut instance = TimeManager {
             passed_time: 0.0,
             timestep: 0.0, // solver needs to call update_timestep
             config,
-        }
+        };
+        instance.restart();
+        instance
     }
 
     pub fn restart(&mut self) {
         self.passed_time = 0.0;
-        self.timestep = 0.0;
+        self.timestep = match &self.config {
+            TimeManagerConfiguration::FixedTimeStep(timestep) => *timestep,
+            TimeManagerConfiguration::AdaptiveTimeStep { timestep_min, .. } => *timestep_min,
+        }
     }
 
     // how much physical time has passed in the simulation

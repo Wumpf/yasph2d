@@ -106,8 +106,8 @@ impl MainState {
         let mut physicalviscosity = sph::PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
 
-        //let sph_solver = sph::WCSPHSolver::new(xsph, &fluid_world.properties);
-        let sph_solver = sph::DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
+        let sph_solver = sph::WCSPHSolver::new(xsph, &fluid_world.properties);
+        //let sph_solver = sph::DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
 
         let particle_radius = fluid_world.properties.particle_radius();
         let particle_mesh = graphics::Mesh::new_circle(
@@ -120,13 +120,15 @@ impl MainState {
         )
         .unwrap();
 
-        let time_manager = sph::TimeManager::new(sph::TimeManagerConfiguration::FixedTimeStep(TARGET_FRAME_SIMDURATION / 20.0));
-        // sph::TimeManagerConfiguration::AdaptiveTimeStep {
-        //     timestep_max: TARGET_FRAME_SIMDURATION,
-        //     timestep_min: REALTIME_TO_SIMTIME_SCALE / (400.0 * 60.0), // Don't do steps that results in more than a 6000 physics steps per second. (i.e. 400 steps for an image on a classic 60Hz display)
-        //     timestep_target_frame: sph::AdaptiveTimeStepTarget::None,
-        //     cfl_factor: 1.0,
-        // });
+        let time_manager = sph::TimeManager::new(
+            //sph::TimeManagerConfiguration::FixedTimeStep(TARGET_FRAME_SIMDURATION / 20.0));
+            sph::TimeManagerConfiguration::AdaptiveTimeStep {
+                timestep_max: TARGET_FRAME_SIMDURATION,
+                timestep_min: REALTIME_TO_SIMTIME_SCALE / (400.0 * 60.0), // Don't do steps that results in more than a 6000 physics steps per second. (i.e. 400 steps for an image on a classic 60Hz display)
+                timestep_target_frame: sph::AdaptiveTimeStepTarget::None,
+                cfl_factor: 0.1,
+            },
+        );
 
         MainState {
             update_mode: UpdateMode::RealTime,
@@ -159,6 +161,10 @@ impl MainState {
         fluid_world.add_boundary_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5));
 
         fluid_world.add_boundary_line(Point::new(0.0, 0.6), Point::new(1.75, 0.5));
+
+        // close of the container - stop gap solution for issues with endlessly falling particles
+        // (mostly a problem for adaptive timestep but potentially also for neighborhood search)
+        fluid_world.add_boundary_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5));
     }
 
     fn draw_text(&mut self, ctx: &mut Context) -> GameResult {
@@ -169,11 +175,12 @@ impl MainState {
             self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
 
         let simulation_info_text = format!(
-            "Frame Processing: {:3.2}ms ({:4} steps)| Single Step (averaged over {}): {:.2}ms\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
+            "Frame Processing: {:3.2}ms ({:4} steps)\nSingle Step (averaged over {}): {:.2}ms, last timestep length {:.4}ms\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
             self.simulation_processing_time_frame.as_secs_f64() * 1000.0,
             self.simulationstep_count_frame,
             self.simulation_step_duration_history.len(),
             average_simulation_step_duration.as_secs_f64() * 1000.0,
+            self.time_manager.timestep() * 1000.0,
             self.time_manager.passed_time(),
             self.simulation_processing_time_total.as_secs_f64(),
         );

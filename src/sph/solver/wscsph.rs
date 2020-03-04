@@ -16,7 +16,7 @@ pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
     density_kernel: smoothing_kernel::Poly6,
     pressure_kernel: smoothing_kernel::Spiky,
     boundary_force_factor: Real,
-    pressure_factor: Real, // denoted as B. B = density0 * speed_of_sound * speed_of_sound / γ.
+    stiffness: Real, // denoted as B. B = density0 * speed_of_sound * speed_of_sound / γ.
 
     // recomputed every frame, but need previous frame due to leap frog iteration scheme
     accellerations: Vec<Vector>,
@@ -32,8 +32,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             viscosity_model,
             density_kernel: smoothing_kernel::Poly6::new(fluid_properties.smoothing_length()),
             pressure_kernel: smoothing_kernel::Spiky::new(fluid_properties.smoothing_length()),
-            boundary_force_factor: 0.5, // (expected accelleration * initial water depth) / (spacing ratio of boundary / normal particles). Arbitrary value right now.
-            pressure_factor: 1.0,
+            boundary_force_factor: 1.0, // (expected accelleration * initial water depth) / (spacing ratio of boundary / normal particles). Arbitrary value right now.
+            stiffness: 50.0,
             accellerations: Vec::new(),
         };
         // set a good default for compressibility
@@ -47,13 +47,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
     pub fn set_compressibility(&mut self, fluid_properties: &ConstantFluidProperties, target_density_variation: Real, expected_max_flow_speed: Real) {
         // real speed of sound of the fluid is usually higher, but this makes our timesteps way too small
         let speed_of_sound = expected_max_flow_speed / target_density_variation.sqrt();
-        self.pressure_factor = fluid_properties.fluid_density() * speed_of_sound * speed_of_sound / TAIT_EQUATION_GAMMA as Real;
+        self.stiffness = fluid_properties.fluid_density() * speed_of_sound * speed_of_sound / TAIT_EQUATION_GAMMA as Real;
     }
 
     // Equation of State (EOS)
-    fn pressure(pressure_factor: Real, fluid_density: Real, local_density: Real) -> Real {
+    fn pressure(stiffness: Real, fluid_density: Real, local_density: Real) -> Real {
         // Tait equation as in Becker & Teschner 2007 WCSPH07
-        pressure_factor * ((local_density / fluid_density).powi(TAIT_EQUATION_GAMMA) - 1.0)
+        stiffness * ((local_density / fluid_density).powi(TAIT_EQUATION_GAMMA) - 1.0)
     }
 
     fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
@@ -70,7 +70,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
         let boundary_force_factor = self.boundary_force_factor;
         let viscosity_model = &self.viscosity_model;
         let gravity = fluid_world.gravity;
-        let pressure_factor = self.pressure_factor;
+        let stiffness = self.stiffness;
 
         self.accellerations
             .par_iter_mut()
@@ -86,7 +86,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             .for_each(|(i, (accelleration, (&vi, &ri, &rhoi)))| {
                 *accelleration = gravity;
 
-                let pi = Self::pressure(pressure_factor, fluid_density, rhoi);
+                let pi = Self::pressure(stiffness, fluid_density, rhoi);
                 let i = i as u32;
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
@@ -96,7 +96,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                     |j| {
                         let j = j as usize;
                         let rhoj = particles.densities[j];
-                        let pj = Self::pressure(pressure_factor, fluid_density, rhoj);
+                        let pj = Self::pressure(stiffness, fluid_density, rhoj);
                         let ri_to_rj = particles.positions[j] - ri;
                         let r_sq = ri_to_rj.magnitude2();
                         let r = r_sq.sqrt();
@@ -137,25 +137,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         microprofile::scope!("WCSPHSolver", "simulation_step");
         self.accellerations.resize(fluid_world.particles.positions.len(), cgmath::Zero::zero());
 
-        // update timestep. TODO: Support dynamic timestep
-        time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, 9999999.0);
-        let dt = time_manager.timestep();
-
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
+
+        let mut dt = time_manager.timestep();
+
         {
             microprofile::scope!("WCSPHSolver", "leap frog 1");
 
-            // This got actually slower for a parallel for loop when used with 2500 particles (too few? or is rayon doing something stupid?)
-            /*
-            fluid_world
-                .particles
-                .positions
-                .par_iter_mut()
-                .zip(fluid_world.particles.velocities.par_iter_mut())
-                .zip(self.accellerations.par_iter())
-                .for_each(|((pos, v), a)| {
-            */
+            // This got actually slower for a parallel for loop when used with 2500 particles (too few? or is rayon doing something silly?)
+            // fluid_world.particles.positions.par_iter_mut().zip(fluid_world.particles.velocities.par_iter_mut()).zip(self.accellerations.par_iter()).for_each(|((pos, v), a)| {
 
             for ((pos, v), a) in fluid_world
                 .particles
@@ -164,11 +155,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
                 .zip(fluid_world.particles.velocities.iter_mut())
                 .zip(self.accellerations.iter())
             {
-                *pos += *v * dt + a * (0.5 * dt * dt);
-                // partial update of velocity.
-                // what we want is v_new = v_old + 0.5 (a_old + a_new) () t
-                // spit it to: v_almostnew = v_old + 0.5 * a_old * t + 0.5 * a_new * t
-                *v += 0.5 * dt * a;
+                *v += 0.5 * dt * a; // v at t_(i+0.5)
+                *pos += *v * dt; // pos at t_(i+1)
             }
         }
 
@@ -176,25 +164,26 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         fluid_world.update_densities(self.density_kernel);
         self.update_accellerations(fluid_world, dt);
 
+        // update timestep
+        {
+            microprofile::scope!("WCSPHSolver", "update timestep");
+            let mut max_velocity_sq: Real = 0.0;
+            for (v, a) in fluid_world.particles.velocities.iter().zip(self.accellerations.iter()) {
+                max_velocity_sq = max_velocity_sq.max((v + a * dt).magnitude2());
+            }
+            time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt());
+            dt = time_manager.timestep();
+        }
+
         // part 2 of leap frog integration. Finish updating velocity.
         {
-            // Again, this got slower with rayon
-            /*fluid_world
-            .particles
-            .velocities
-            .par_iter_mut()
-            .zip(self.accellerations.par_iter())
-            .for_each(|(v, a)| {
-                *v += 0.5 * dt * a;
-            });*/
+            // This got actually slower for a parallel for loop when used with 2500 particles (too few? or is rayon doing something silly?)
+            // fluid_world.particles.velocities.par_iter_mut().zip(self.accellerations.par_iter()).for_each(|(v, a)|
 
             microprofile::scope!("WCSPHSolver", "leap frog 2");
             for (v, a) in fluid_world.particles.velocities.iter_mut().zip(self.accellerations.iter()) {
-                *v += 0.5 * dt * a;
+                *v += 0.5 * dt * a; // v at t_(i+1)
             }
         }
-
-        // todo: is this actually correct with leap frog?
-        time_manager.update_time();
     }
 }
