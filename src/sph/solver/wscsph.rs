@@ -33,12 +33,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             density_kernel: smoothing_kernel::Poly6::new(fluid_properties.smoothing_length()),
             pressure_kernel: smoothing_kernel::Spiky::new(fluid_properties.smoothing_length()),
             boundary_force_factor: 1.0, // (expected accelleration * initial water depth) / (spacing ratio of boundary / normal particles). Arbitrary value right now.
-            stiffness: 50.0,
+            stiffness: 0.0,             // set in set_compressibility below
             accellerations: Vec::new(),
         };
         // set a good default for compressibility
         solver.set_compressibility(fluid_properties, 0.01, 1.0);
-
         solver
     }
 
@@ -53,7 +52,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
     // Equation of State (EOS)
     fn pressure(stiffness: Real, fluid_density: Real, local_density: Real) -> Real {
         // Tait equation as in Becker & Teschner 2007 WCSPH07
-        stiffness * ((local_density / fluid_density).powi(TAIT_EQUATION_GAMMA) - 1.0)
+        // The max on pressure ratio is due to pressure clamping to work around particle deficiency problem. Good explanation here:
+        // https://github.com/InteractiveComputerGraphics/SPlisHSPlasH/issues/36#issuecomment-495883932
+        stiffness * ((local_density / fluid_density).max(1.0).powi(TAIT_EQUATION_GAMMA) - 1.0)
     }
 
     fn update_accellerations(&mut self, fluid_world: &FluidParticleWorld, dt: Real) {
