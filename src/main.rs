@@ -35,10 +35,15 @@ enum UpdateMode {
     RealTime,
     Recording,
 }
+#[derive(PartialEq)]
+enum Solver {
+    WSCSPH,
+    DFSPH,
+}
 
 struct MainState {
     update_mode: UpdateMode,
-
+    //solver: Solver,
     fluid_world: sph::FluidParticleWorld,
     time_manager: sph::TimeManager,
     sph_solver: Box<dyn sph::Solver>,
@@ -101,13 +106,17 @@ impl MainState {
             100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         Self::reset_fluid(&mut fluid_world);
+        let solver = Solver::DFSPH; // Solver::WSCSPH;
+
         let xsph = sph::XSPHViscosityModel::new(fluid_world.properties.smoothing_length());
         //xsph.epsilon = 0.1;
         let mut physicalviscosity = sph::PhysicalViscosityModel::new(fluid_world.properties.smoothing_length());
         physicalviscosity.fluid_viscosity = 0.01;
 
-        let sph_solver = sph::WCSPHSolver::new(xsph, &fluid_world.properties);
-        //let sph_solver = sph::DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length());
+        let sph_solver: Box<dyn sph::Solver> = match solver {
+            Solver::WSCSPH => Box::new(sph::WCSPHSolver::new(xsph, &fluid_world.properties)),
+            Solver::DFSPH => Box::new(sph::DFSPHSolver::new(xsph, fluid_world.properties.smoothing_length())),
+        };
 
         let particle_radius = fluid_world.properties.particle_radius();
         let particle_mesh = graphics::Mesh::new_circle(
@@ -120,13 +129,18 @@ impl MainState {
         )
         .unwrap();
 
+        let cfl_factor = match solver {
+            Solver::WSCSPH => 0.2,
+            Solver::DFSPH => 1.0,
+        };
+
         let time_manager = sph::TimeManager::new(
             //sph::TimeManagerConfiguration::FixedTimeStep(TARGET_FRAME_SIMDURATION / 20.0));
             sph::TimeManagerConfiguration::AdaptiveTimeStep {
-                timestep_max: TARGET_FRAME_SIMDURATION,
-                timestep_min: REALTIME_TO_SIMTIME_SCALE / (400.0 * 60.0), // Don't do steps that results in more than a 6000 physics steps per second. (i.e. 400 steps for an image on a classic 60Hz display)
+                timestep_max: TARGET_FRAME_SIMDURATION / 4.0,
+                timestep_min: REALTIME_TO_SIMTIME_SCALE / (400.0 * 60.0), // Don't do steps that results in more than a 400 steps for an image on a classic 60Hz display
                 timestep_target_frame: sph::AdaptiveTimeStepTarget::None,
-                cfl_factor: 0.1,
+                cfl_factor,
             },
         );
 
@@ -134,7 +148,7 @@ impl MainState {
             update_mode: UpdateMode::RealTime,
             fluid_world,
             time_manager,
-            sph_solver: Box::new(sph_solver),
+            sph_solver,
 
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 2.1, 1.6)),
             particle_mesh,
@@ -312,6 +326,11 @@ impl EventHandler for MainState {
                 let target_simulation_time =
                     (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
                 while self.time_manager.passed_time() < target_simulation_time {
+
+                    //if self.time_manager.passed_time() > 2.0 {
+                    //    break;
+                    //}
+
                     // If we can't process fast enough, we give up and accept that there is an offset between realtime and simulation time.
                     if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME {
                         self.simulation_to_realtime_offset += target_simulation_time - self.time_manager.passed_time();

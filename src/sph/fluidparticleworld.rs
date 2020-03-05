@@ -92,7 +92,7 @@ pub struct FluidParticleWorld {
     pub particles: Particles,
     pub properties: ConstantFluidProperties,
 
-    scratch_buffers: ScratchBufferStore,
+    pub(super) scratch_buffers: ScratchBufferStore,
 
     pub gravity: Vector, // global gravity force in m/s² (== N/kg)
 

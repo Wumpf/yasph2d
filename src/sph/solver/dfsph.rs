@@ -38,8 +38,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             kernel: smoothing_kernel::CubicSpline::new(smoothing_length),
 
-            max_density_error: 1.0 / 1000.0 / 100.0, // 1.0% deviation per millisecond.
-            max_num_density_correction_iterations: 100,
+            max_density_error: 0.1 / 1000.0 / 100.0, // 0.1% deviation per millisecond.
+            max_num_density_correction_iterations: 200,
 
             alpha_values: vec![],
             predicted_velocities: vec![],
@@ -245,49 +245,71 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         }
 
         // compute non-pressure forces (from scratch)
-        let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.properties.particle_mass();
-
-        // update timestep. TODO: Support dynamic timestep
-        time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, 9999999.0);
-        let dt = time_manager.timestep();
-
-        // compute velocity prediction
         {
-            microprofile::scope!("DFSPHSolver", "velocity prediction");
+            let mut accellerations = fluid_world.scratch_buffers.get_buffer_vector(fluid_world.particles.positions.len());
 
-            let particles = &fluid_world.particles;
-            let particle_mass = fluid_world.properties.particle_mass();
-            let viscosity_model = &self.viscosity_model;
-            let force_to_particle_velocitychange = dt / particle_mass;
-            let non_pressure_velocitychange = force_to_particle_velocitychange * non_pressure_forces;
-            self.predicted_velocities
-                .par_iter_mut()
-                .zip((&particles.positions, &particles.velocities).into_par_iter())
-                .enumerate()
-                .for_each(|(i, (predicted_velocity, (&ri, &vi)))| {
-                    // forces
-                    *predicted_velocity = non_pressure_velocitychange + vi;
+            {
+                microprofile::scope!("DFSPHSolver", "non-pressure forces");
 
-                    // viscosity
-                    particles.foreach_neighbor_particle(
-                        i as u32,
-                        #[inline(always)]
-                        |j| {
-                            let j = j as usize;
-                            let r_sq = ri.distance2(particles.positions[j]);
-                            *predicted_velocity += dt
-                                * viscosity_model.compute_viscous_accelleration(
-                                    dt,
-                                    r_sq,
-                                    r_sq.sqrt(),
-                                    particle_mass,
-                                    particles.densities[j],
-                                    particles.velocities[j] - vi,
-                                );
-                        },
-                    );
-                });
+                let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.properties.particle_mass();
+                let particle_mass = fluid_world.properties.particle_mass();
+                let non_pressure_accelleration = non_pressure_forces / particle_mass;
+                let dt = time_manager.timestep();
+                let particles = &fluid_world.particles;
+                let viscosity_model = &self.viscosity_model;
+                accellerations.buffer
+                    .par_iter_mut()
+                    .zip((&particles.positions, &particles.velocities).into_par_iter())
+                    .enumerate()
+                    .for_each(|(i, (a, (&ri, &vi)))| {
+                        // forces
+                        *a = non_pressure_accelleration;
+
+                        // viscosity
+                        particles.foreach_neighbor_particle(
+                            i as u32,
+                            #[inline(always)]
+                            |j| {
+                                let j = j as usize;
+                                let r_sq = ri.distance2(particles.positions[j]);
+                                *a += viscosity_model.compute_viscous_accelleration(
+                                        dt,
+                                        r_sq,
+                                        r_sq.sqrt(),
+                                        particle_mass,
+                                        particles.densities[j],
+                                        particles.velocities[j] - vi,
+                                    );
+                            },
+                        );
+                    });
+            }
+
+            // update timestep
+            {
+                microprofile::scope!("DFSPHSolver", "update timestep");
+                let dt = time_manager.timestep();
+                let mut max_velocity_sq: Real = 0.0;
+                for (v, a) in fluid_world.particles.velocities.iter().zip(accellerations.buffer.iter()) {
+                    max_velocity_sq = max_velocity_sq.max((v + a * dt).magnitude2());
+                }
+                time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt());
+            }
+
+            // predict velocity
+            {
+                microprofile::scope!("DFSPHSolver", "velocity prediction");
+                let dt = time_manager.timestep();
+                for (predicted_velocity, (v, a)) in self
+                    .predicted_velocities
+                    .iter_mut()
+                    .zip(fluid_world.particles.velocities.iter().zip(accellerations.buffer.iter()))
+                {
+                    *predicted_velocity = v + a * dt;
+                }
+            }
         }
+        let dt = time_manager.timestep();
 
         // density correction loop
         self.correct_density_error(dt, fluid_world);
