@@ -90,7 +90,8 @@ impl TimeManager {
                 timestep_target_frame,
                 cfl_factor,
             } => {
-                let time_cfl = cfl_factor * 0.4 * particle_diameter / max_velocity; // Evaluates Courant–Friedrichs–Lewy (CFL) condition
+                const VELOCITY_EPSILON: Real = 0.00001;
+                let time_cfl = cfl_factor * 0.4 * particle_diameter / (max_velocity + VELOCITY_EPSILON); // Evaluates Courant–Friedrichs–Lewy (CFL) condition
                 if let AdaptiveTimeStepTarget::TargetFrameLength(timestep_target) = timestep_target_frame {
                     let time_to_target = timestep_target - self.passed_time % timestep_target;
                     timestep_min.max(timestep_max.min(time_cfl).min(time_to_target))
