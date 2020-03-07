@@ -230,10 +230,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let i = i as u32;
 
                 // particle deficiency?
-                // if particles.num_total_neighbors(i) < 5 {
-                //     *density_change_i = 0.0;
-                //     return;
-                // }
+                if particles.num_total_neighbors(i) < 5 {
+                    *density_change_i = 0.0;
+                    return;
+                }
 
                 let mut delta = 0.0; // gradient to self is zero.
                 particles.foreach_neighbor_particle(
