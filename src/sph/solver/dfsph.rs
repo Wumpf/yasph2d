@@ -24,6 +24,11 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     // Maximum number of pressure solver iterations
     max_num_density_correction_iterations: usize,
 
+    // Max divergenc error. In relative density deviation per second - 0.01 means 1% density deviation per second.
+    max_divergence_error: Real,
+    // Maximum number of divergence minimizer iterations
+    max_num_divergence_correction_iterations: usize,
+
     // Recomputed every frame, but needs to be up to date at start of simulation step.
     alpha_values: Vec<Real>,
 }
@@ -35,8 +40,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             kernel: smoothing_kernel::CubicSpline::new(smoothing_length),
 
-            max_avg_density_error: 0.1 / 1000.0 / 100.0, // 0.1% deviation per millisecond.
+            max_avg_density_error: 0.01 / 100.0, // 0.1% deviation per second.
             max_num_density_correction_iterations: 200,
+
+            max_divergence_error: 0.1 / 100.0, // 1.0% deviation per second.
+            max_num_divergence_correction_iterations: 400,
 
             alpha_values: vec![],
         }
@@ -65,8 +73,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     i,
                     #[inline(always)]
                     |j| {
-                        let rj = particles.positions[j as usize];
-                        let grad_ij = kernel.gradient_from_positions(ri, rj) * particle_mass;
+                        let pos_j = particles.positions[j as usize];
+                        let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
                         gradient_sum += grad_ij;
                         gradient_square_sum += grad_ij.magnitude2();
                     },
@@ -75,8 +83,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     i,
                     #[inline(always)]
                     |j| {
-                        let rj = particles.boundary_particles[j as usize];
-                        let grad_ij = kernel.gradient_from_positions(ri, rj) * particle_mass;
+                        let pos_j = particles.boundary_particles[j as usize];
+                        let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
                         gradient_sum += grad_ij;
                         gradient_square_sum += grad_ij.magnitude2();
                     },
@@ -96,25 +104,25 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             .par_iter_mut()
             .zip((&fluid_world.particles.densities, &fluid_world.particles.positions, velocities).into_par_iter())
             .enumerate()
-            .for_each(|(i, (density_error_i, (&original_density, &ri, &predicted_vi)))| {
+            .for_each(|(i, (density_error_i, (&original_density, &pos_i, &velocity_vi)))| {
                 let mut delta = 0.0; // gradient to self is zero.
                 let i = i as u32;
                 particles.foreach_neighbor_particle(
                     i,
                     #[inline(always)]
                     |j| {
-                        let rj = particles.positions[j as usize];
-                        let delta_v = predicted_vi - velocities[j as usize];
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, rj));
+                        let pos_j = particles.positions[j as usize];
+                        let delta_v = velocity_vi - velocities[j as usize];
+                        delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
                     },
                 );
                 particles.foreach_neighbor_particle_boundary(
                     i,
                     #[inline(always)]
                     |j| {
-                        let rj = particles.boundary_particles[j as usize];
-                        let delta_v = predicted_vi;
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, rj));
+                        let pos_j = particles.boundary_particles[j as usize];
+                        let delta_v = velocity_vi;
+                        delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
                     },
                 );
                 *density_error_i = original_density + delta * particle_mass * dt;
@@ -147,9 +155,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     i,
                     #[inline(always)]
                     |j| {
-                        let rj = particles.positions[j as usize];
+                        let pos_j = particles.positions[j as usize];
                         let kj = density_error[j as usize] * self.alpha_values[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_positions(ri, rj);
+                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
                     },
                 );
                 particles.foreach_neighbor_particle_boundary(
@@ -157,8 +165,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j| {
                         // compared to k values in paper already divided with density and multiplied with dt²!
-                        let rj = particles.boundary_particles[j as usize];
-                        delta += ki * kernel.gradient_from_positions(ri, rj);
+                        let pos_j = particles.boundary_particles[j as usize];
+                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
                     },
                 );
 
@@ -182,22 +190,157 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             num_iter += 1;
 
             let avg_density_error: Real = density_error.par_iter().sum::<Real>() / density_error.len() as Real;
+            let relative_density_error = avg_density_error / fluid_world.properties.fluid_density();
             assert!(avg_density_error.is_finite());
 
             // error is expressed relative to fluid density and time!
-            if avg_density_error < self.max_avg_density_error / dt * fluid_world.properties.fluid_density() {
+            if relative_density_error * dt < self.max_avg_density_error {
                 // println!(
-                //     "density error correction succeeded after {} steps. Density error was {}.",
-                //     num_iter, density_error
+                //     "Density error correction finished after {} steps. Density error was {}, that is {}% relative error per second. Target was {}% per second",
+                //     num_iter,
+                //     avg_density_error,
+                //     relative_density_error * dt * 100.0,
+                //     self.max_avg_density_error * 100.0,
                 // );
                 break;
             }
             if num_iter > self.max_num_density_correction_iterations {
                 println!(
-                    "density error canceled after {} steps. Density error was {}, that is {}%.",
+                    "Density error correction canceled after {} steps. Density error was {}, that is {}% relative error per second. Target was {}% per second",
                     num_iter,
                     avg_density_error,
-                    avg_density_error / fluid_world.properties.fluid_density() / 100.0
+                    relative_density_error * dt * 100.0,
+                    self.max_avg_density_error * 100.0,
+                );
+                break;
+            }
+        }
+    }
+
+    // todo: this is almost identical to compute_density_error, use this fact!
+    fn compute_density_change(&self, fluid_world: &FluidParticleWorld, velocities: &[Vector], density_change: &mut [Real]) {
+        microprofile::scope!("DFSPHSolver", "compute_density_change");
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
+        density_change
+            .par_iter_mut()
+            .zip((&fluid_world.particles.positions, velocities).into_par_iter())
+            .enumerate()
+            .for_each(|(i, (density_change_i, (&ri, &velocity_vi)))| {
+                let i = i as u32;
+
+                // particle deficiency?
+                // if particles.num_total_neighbors(i) < 5 {
+                //     *density_change_i = 0.0;
+                //     return;
+                // }
+
+                let mut delta = 0.0; // gradient to self is zero.
+                particles.foreach_neighbor_particle(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.positions[j as usize];
+                        let delta_v = velocity_vi - velocities[j as usize];
+                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
+                    },
+                );
+                particles.foreach_neighbor_particle_boundary(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.boundary_particles[j as usize];
+                        let delta_v = velocity_vi;
+                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
+                    },
+                );
+                *density_change_i = delta * particle_mass;
+                *density_change_i = density_change_i.max(0.0); // todo: what's the explanation for this?
+            });
+    }
+
+    // todo: this is almost identical to correct_velocity_with_density_error, use this fact!
+    fn correct_velocity_with_divergence_error(&self, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_change: &[Real]) {
+        microprofile::scope!("DFSPHSolver", "correct_velocity_with_divergence_error");
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
+        let kernel = &self.kernel;
+
+        velocities
+            .par_iter_mut()
+            .zip((&fluid_world.particles.positions, density_change, &self.alpha_values).into_par_iter())
+            .enumerate()
+            .for_each(|(i, (predicted_velocity, (&ri, density_change_i, alpha_i)))| {
+                let mut delta: Vector = Zero::zero(); // gradient to self is zero.
+                let ki = density_change_i * alpha_i;
+
+                // compared to k values in paper already divided with density
+                // collapsing divition of dt with multiply later -> nothing!
+
+                let i = i as u32;
+                particles.foreach_neighbor_particle(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.positions[j as usize];
+                        let kj = density_change[j as usize] * self.alpha_values[j as usize];
+                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+                particles.foreach_neighbor_particle_boundary(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.boundary_particles[j as usize];
+                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+
+                *predicted_velocity -= delta * particle_mass;
+            });
+    }
+
+    fn correct_divergence_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, velocities: &mut [Vector]) {
+        // todo: warmup & general use of values from previous frame
+        microprofile::scope!("DFSPHSolver", "correct_divergence_error");
+
+        // Relationship between density change and divergence:
+        // https://en.wikipedia.org/wiki/Smoothed-particle_hydrodynamics#Operators
+        // Divergence = densitychange / density
+
+        let mut _density_change = fluid_world.scratch_buffers.get_buffer_real(fluid_world.particles.positions.len());
+        let density_change = &mut _density_change.buffer;
+
+        let mut num_iter = 0;
+        loop {
+            microprofile::scope!("DFSPHSolver", "density_change_iteration");
+
+            self.compute_density_change(fluid_world, velocities, density_change);
+            self.correct_velocity_with_divergence_error(fluid_world, velocities, density_change);
+            num_iter += 1;
+
+            let avg_divergence: Real =
+                density_change.par_iter().sum::<Real>() / density_change.len() as Real / fluid_world.properties.fluid_density();
+            assert!(avg_divergence.is_finite());
+
+            // error is expressed relative to time
+            if avg_divergence * dt < self.max_divergence_error {
+                // println!(
+                //     "Divergence error correction finished after {} steps. Avg divergence was {}, that is {}% per second. Target was {}% per second",
+                //     num_iter,
+                //     avg_divergence,
+                //     avg_divergence * dt * 100.0,
+                //     self.max_divergence_error * 100.0,
+                // );
+                break;
+            }
+            if num_iter > self.max_num_divergence_correction_iterations {
+                println!(
+                    "Divergence error correction canceled after {} steps. Avg divergence was {}, that is {}% per second. Target was {}% per second",
+                    num_iter,
+                    avg_divergence,
+                    avg_divergence * dt * 100.0,
+                    self.max_divergence_error * 100.0,
                 );
                 break;
             }
@@ -321,7 +464,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         Self::compute_alpha_factors(&mut self.alpha_values, fluid_world, self.kernel);
 
         // divergence error loop
-        // todo
+        self.correct_divergence_error(dt, fluid_world, predicted_velocities);
 
         // update velocities
         std::mem::swap(&mut fluid_world.particles.velocities, predicted_velocities);

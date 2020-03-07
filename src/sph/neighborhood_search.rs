@@ -377,6 +377,14 @@ impl NeighborLists {
             }
         }
     }
+
+    pub fn num_neighbors(&self, particle: ParticleIndex) -> u32 {
+        unsafe {
+            let ranges = &*self.neighborhood_list_ranges.list.get();
+            let range = *ranges.get_unchecked(particle as usize);
+            range.1 - range.0
+        }
+    }
 }
 
 pub struct NeighborhoodSearch {
@@ -464,8 +472,18 @@ impl NeighborhoodSearch {
     }
 
     #[inline]
+    pub fn num_neighbors(&self, particle: ParticleIndex) -> u32 {
+        self.particle_particle_neighbors.num_neighbors(particle)
+    }
+
+    #[inline]
     pub fn foreach_boundary_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
         self.particle_boundary_neighbors.foreach_neighbor(particle, f);
+    }
+
+    #[inline]
+    pub fn num_boundary_neighbors(&self, particle: ParticleIndex) -> u32 {
+        self.particle_boundary_neighbors.num_neighbors(particle)
     }
 
     pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {

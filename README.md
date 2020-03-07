@@ -9,7 +9,7 @@ Not even sure yet if I ditch the 2d thing and make it 3d.
 
 Implements solvers using
 * Weakly Compressible SPH (WCSPH)
-* DFSPH (wip, see #1)
+* DFSPH
   * [Bender & Koschier 2015, Divergence-Free Smoothed Particle Hydrodynamicss](https://animation.rwth-aachen.de/publication/054/)  
   * [Bender & Koschier 2017, Divergence-Free SPH for Incompressible and Viscous Fluids](https://animation.rwth-aachen.de/publication/051/)
 

@@ -40,6 +40,13 @@ impl Particles {
     fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
         neighborhood.foreach_boundary_neighbor(pidx, f);
     }
+
+    // Can be useful to determine particle deficiency. Not used right now.
+    #[inline]
+    #[allow(dead_code)]
+    pub(super) fn num_total_neighbors(&self, pidx: ParticleIndex) -> u32 {
+        self.neighborhood.num_neighbors(pidx) + self.neighborhood.num_boundary_neighbors(pidx)
+    }
 }
 
 pub struct ConstantFluidProperties {
