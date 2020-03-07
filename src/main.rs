@@ -37,7 +37,9 @@ enum UpdateMode {
 }
 #[derive(PartialEq)]
 enum Solver {
+    #[allow(dead_code)]
     WSCSPH,
+    #[allow(dead_code)]
     DFSPH,
 }
 

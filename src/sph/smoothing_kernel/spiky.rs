@@ -13,7 +13,6 @@ pub struct Spiky {
 }
 
 impl Spiky {
-    #[allow(dead_code)]
     pub fn new(smoothing_length: Real) -> Spiky {
         Spiky {
             h: smoothing_length,

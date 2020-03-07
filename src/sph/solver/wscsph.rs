@@ -26,7 +26,6 @@ pub struct WCSPHSolver<TViscosityModel: ViscosityModel> {
 const TAIT_EQUATION_GAMMA: i32 = 7;
 
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosityModel> {
-    #[allow(dead_code)]
     pub fn new(viscosity_model: TViscosityModel, fluid_properties: &ConstantFluidProperties) -> WCSPHSolver<TViscosityModel> {
         let mut solver = WCSPHSolver {
             viscosity_model,

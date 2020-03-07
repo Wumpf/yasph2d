@@ -43,7 +43,6 @@ impl Particles {
 
     // Can be useful to determine particle deficiency. Not used right now.
     #[inline]
-    #[allow(dead_code)]
     pub(super) fn num_total_neighbors(&self, pidx: ParticleIndex) -> u32 {
         self.neighborhood.num_neighbors(pidx) + self.neighborhood.num_boundary_neighbors(pidx)
     }

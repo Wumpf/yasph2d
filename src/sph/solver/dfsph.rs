@@ -33,7 +33,6 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     alpha_values: Vec<Real>,
 }
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosityModel> {
-    #[allow(dead_code)]
     pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> DFSPHSolver<TViscosityModel> {
         DFSPHSolver {
             viscosity_model,
