@@ -163,14 +163,27 @@ impl FluidParticleWorld {
         }
     }
 
+    pub fn add_boundary_thick_line(&mut self, start: Point, end: Point, thickness_in_particles: u32) {
+        let dir = (end - start).normalize();
+        let dir_perpendicular = Vector::new(-dir.y, dir.x);
+        let thickness_world = thickness_in_particles as Real / self.properties.num_particles_per_meter();
+        let elongation = dir * thickness_world * 0.5;
+        let mut offset = -dir_perpendicular * thickness_world * 0.5;
+        let step = dir_perpendicular * thickness_world / thickness_in_particles as Real;
+        for _ in 0..thickness_in_particles {
+            self.add_boundary_line(start + offset - elongation, end + offset + elongation);
+            offset += step;
+        }
+    }
+
     pub fn add_boundary_line(&mut self, start: Point, end: Point) {
         let distance = start.distance(end);
         let num_particles_per_meter = self.properties.num_particles_per_meter();
-        let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
+        let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter + 0.5) as usize);
         self.particles.boundary_particles.reserve(num_shadow_particles);
-        let step = (end - start) / (num_shadow_particles as Real);
+        let step = (end - start) / distance / self.properties.num_particles_per_meter();
 
-        let mut pos = start;
+        let mut pos = start; //- step * 0.5
         for _ in 0..num_shadow_particles {
             self.particles.boundary_particles.push(pos);
             pos += step;

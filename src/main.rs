@@ -170,15 +170,15 @@ impl MainState {
         fluid_world.remove_all_boundary_particles();
 
         fluid_world.add_fluid_rect(&Rect::new(0.1, 0.7, 0.5, 1.0), 0.05);
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(2.0, 0.0));
-        fluid_world.add_boundary_line(Point::new(0.0, 0.0), Point::new(0.0, 2.5));
-        fluid_world.add_boundary_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5));
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(2.0, 0.0), 2);
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(0.0, 2.5), 2);
+        fluid_world.add_boundary_thick_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5), 2);
 
         fluid_world.add_boundary_line(Point::new(0.0, 0.6), Point::new(1.75, 0.5));
 
         // close of the container - stop gap solution for issues with endlessly falling particles
         // (mostly a problem for adaptive timestep but potentially also for neighborhood search)
-        fluid_world.add_boundary_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5));
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5), 2);
     }
 
     fn draw_text(&mut self, ctx: &mut Context) -> GameResult {
@@ -326,7 +326,6 @@ impl EventHandler for MainState {
                 let target_simulation_time =
                     (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
                 while self.time_manager.passed_time() < target_simulation_time {
-
                     //if self.time_manager.passed_time() > 2.0 {
                     //    break;
                     //}
