@@ -164,7 +164,7 @@ impl FluidParticleWorld {
     }
 
     pub fn add_boundary_line(&mut self, start: Point, end: Point) {
-        let distance = start.distance2(end);
+        let distance = start.distance(end);
         let num_particles_per_meter = self.properties.num_particles_per_meter();
         let num_shadow_particles = std::cmp::max(1, (distance * num_particles_per_meter) as usize);
         self.particles.boundary_particles.reserve(num_shadow_particles);
