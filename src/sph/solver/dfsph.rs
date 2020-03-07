@@ -20,7 +20,8 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     //boundary_mass_factor: Real,
 
     // Max density error. In relative density deviation per second - 0.01 means 1% density deviation per second.
-    max_density_error: Real,
+    max_avg_density_error: Real,
+    // Maximum number of pressure solver iterations
     max_num_density_correction_iterations: usize,
 
     // Recomputed every frame, but needs to be up to date at start of simulation step.
@@ -34,7 +35,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             kernel: smoothing_kernel::CubicSpline::new(smoothing_length),
 
-            max_density_error: 0.1 / 1000.0 / 100.0, // 0.1% deviation per millisecond.
+            max_avg_density_error: 0.1 / 1000.0 / 100.0, // 0.1% deviation per millisecond.
             max_num_density_correction_iterations: 200,
 
             alpha_values: vec![],
@@ -86,16 +87,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             });
     }
 
-    fn predict_densities(&self, dt: Real, fluid_world: &FluidParticleWorld, predicted_velocities: &[Vector], predicted_densities: &mut [Real]) {
-        microprofile::scope!("DFSPHSolver", "predict_densities");
+    fn compute_density_error(&self, dt: Real, fluid_world: &FluidParticleWorld, velocities: &[Vector], density_error: &mut [Real]) {
+        microprofile::scope!("DFSPHSolver", "compute_density_error");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let reference_density = fluid_world.properties.fluid_density();
-        predicted_densities
+        density_error
             .par_iter_mut()
-            .zip((&fluid_world.particles.densities, &fluid_world.particles.positions, predicted_velocities).into_par_iter())
+            .zip((&fluid_world.particles.densities, &fluid_world.particles.positions, velocities).into_par_iter())
             .enumerate()
-            .for_each(|(i, (predicted_densitiy, (&original_density, &ri, &predicted_vi)))| {
+            .for_each(|(i, (density_error_i, (&original_density, &ri, &predicted_vi)))| {
                 let mut delta = 0.0; // gradient to self is zero.
                 let i = i as u32;
                 particles.foreach_neighbor_particle(
@@ -103,7 +104,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j| {
                         let rj = particles.positions[j as usize];
-                        let delta_v = predicted_vi - predicted_velocities[j as usize];
+                        let delta_v = predicted_vi - velocities[j as usize];
                         delta += delta_v.dot(self.kernel.gradient_from_positions(ri, rj));
                     },
                 );
@@ -116,34 +117,27 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                         delta += delta_v.dot(self.kernel.gradient_from_positions(ri, rj));
                     },
                 );
-                *predicted_densitiy = original_density + delta * particle_mass * dt;
+                *density_error_i = original_density + delta * particle_mass * dt;
 
                 // ignore loss of density
-                *predicted_densitiy = reference_density.max(*predicted_densitiy);
+                *density_error_i = reference_density.max(*density_error_i) - reference_density;
             });
     }
 
-    fn update_velocity_prediction(
-        &self,
-        dt: Real,
-        fluid_world: &FluidParticleWorld,
-        predicted_velocities: &mut [Vector],
-        predicted_densities: &[Real],
-    ) {
-        microprofile::scope!("DFSPHSolver", "update_velocity_prediction");
+    fn correct_velocity_with_density_error(&self, dt: Real, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_error: &[Real]) {
+        microprofile::scope!("DFSPHSolver", "correct_velocity_with_density_error");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
-        let reference_density = fluid_world.properties.fluid_density();
         let inv_dt = 1.0 / dt;
         let kernel = &self.kernel;
 
-        predicted_velocities
+        velocities
             .par_iter_mut()
-            .zip((&fluid_world.particles.positions, predicted_densities, &self.alpha_values).into_par_iter())
+            .zip((&fluid_world.particles.positions, density_error, &self.alpha_values).into_par_iter())
             .enumerate()
-            .for_each(|(i, (predicted_velocity, (&ri, predicted_density_i, alpha_i)))| {
+            .for_each(|(i, (predicted_velocity, (&ri, density_error_i, alpha_i)))| {
                 let mut delta: Vector = Zero::zero(); // gradient to self is zero.
-                let ki = (predicted_density_i - reference_density) * alpha_i;
+                let ki = density_error_i * alpha_i;
 
                 // compared to k values in paper already divided with density
                 // collapsing divition of dt² with multiply later -> divide delta with dt
@@ -154,7 +148,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j| {
                         let rj = particles.positions[j as usize];
-                        let kj = (predicted_densities[j as usize] - reference_density) * self.alpha_values[j as usize];
+                        let kj = density_error[j as usize] * self.alpha_values[j as usize];
                         delta += (ki + kj) * kernel.gradient_from_positions(ri, rj);
                     },
                 );
@@ -172,28 +166,26 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             });
     }
 
-    fn correct_density_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, predicted_velocities: &mut [Vector]) {
+    fn correct_density_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, velocities: &mut [Vector]) {
         // todo: warmup & general use of values from previous frame
         microprofile::scope!("DFSPHSolver", "correct_density_error");
 
+        let mut _density_error = fluid_world.scratch_buffers.get_buffer_real(fluid_world.particles.positions.len());
+        let density_error = &mut _density_error.buffer;
+
         let mut num_iter = 0;
-
-        let mut _predicted_densities = fluid_world.scratch_buffers.get_buffer_real(fluid_world.particles.positions.len());
-        let predicted_densities = &mut _predicted_densities.buffer;
-
         loop {
             microprofile::scope!("DFSPHSolver", "density_iteration");
 
-            self.predict_densities(dt, fluid_world, predicted_velocities, predicted_densities);
-            self.update_velocity_prediction(dt, fluid_world, predicted_velocities, predicted_densities);
+            self.compute_density_error(dt, fluid_world, velocities, density_error);
+            self.correct_velocity_with_density_error(dt, fluid_world, velocities, density_error);
             num_iter += 1;
 
-            let average_density: Real = predicted_densities.par_iter().sum::<Real>() / predicted_densities.len() as Real;
-            assert!(average_density.is_finite());
-            let density_error = (average_density - fluid_world.properties.fluid_density()).abs();
+            let avg_density_error: Real = density_error.par_iter().sum::<Real>() / density_error.len() as Real;
+            assert!(avg_density_error.is_finite());
 
             // error is expressed relative to fluid density and time!
-            if density_error < self.max_density_error / dt * fluid_world.properties.fluid_density() {
+            if avg_density_error < self.max_avg_density_error / dt * fluid_world.properties.fluid_density() {
                 // println!(
                 //     "density error correction succeeded after {} steps. Density error was {}.",
                 //     num_iter, density_error
@@ -204,8 +196,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 println!(
                     "density error canceled after {} steps. Density error was {}, that is {}%.",
                     num_iter,
-                    density_error,
-                    density_error / fluid_world.properties.fluid_density() / 100.0
+                    avg_density_error,
+                    avg_density_error / fluid_world.properties.fluid_density() / 100.0
                 );
                 break;
             }
