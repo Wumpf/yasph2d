@@ -353,7 +353,7 @@ impl EventHandler for MainState {
                 } else {
                     epsilon = 1.0e-9;
                 }
-                let target_simulation_time = self.time_manager.passed_time() + TARGET_FRAME_SIMDURATION - epsilon;
+                let target_simulation_time = self.frame_counter as Real * TARGET_FRAME_SIMDURATION - epsilon;
                 while self.time_manager.passed_time() < target_simulation_time {
                     self.single_sim_step();
                 }

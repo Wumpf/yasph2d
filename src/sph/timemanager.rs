@@ -91,13 +91,18 @@ impl TimeManager {
                 cfl_factor,
             } => {
                 const VELOCITY_EPSILON: Real = 0.00001;
-                let time_cfl = cfl_factor * 0.4 * particle_diameter / (max_velocity + VELOCITY_EPSILON); // Evaluates Courant–Friedrichs–Lewy (CFL) condition
-                if let AdaptiveTimeStepTarget::TargetFrameLength(timestep_target) = timestep_target_frame {
-                    let time_to_target = timestep_target - self.passed_time % timestep_target;
-                    timestep_min.max(timestep_max.min(time_cfl).min(time_to_target))
+                // Evaluates Courant–Friedrichs–Lewy (CFL) condition
+                let time_cfl = cfl_factor * 0.4 * particle_diameter / (max_velocity + VELOCITY_EPSILON);
+                // Smaller timestep is always fine, but don't jerk it up. Doing so causes timestep oscillation and resulting instability
+                // Supposedly this happens in impact situations: Particle's high velocity is reversed, so for a short moment around 0 -> high timstep -> explode back.
+                let upper_bound = timestep_max.min(self.timestep * 2.0);
+                let lower_bound = if let AdaptiveTimeStepTarget::TargetFrameLength(timestep_target) = timestep_target_frame {
+                    let time_to_target = self.passed_time - (self.passed_time / timestep_target).floor() * timestep_target;
+                    timestep_min.min(time_to_target)
                 } else {
-                    timestep_min.max(timestep_max.min(time_cfl))
-                }
+                    *timestep_min
+                };
+                lower_bound.max(upper_bound.min(time_cfl))
             }
         }
     }
