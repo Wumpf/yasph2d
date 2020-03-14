@@ -16,21 +16,26 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
 
     kernel: smoothing_kernel::CubicSpline,
 
-    // Not using a boundary mass/force factor as in our WCSPH, since solver usually makes sure particles don't pass each other.
-    //boundary_mass_factor: Real,
-
     // Max density error. In relative density deviation per second - 0.01 means 1% density deviation per second.
     max_avg_density_error: Real,
     // Maximum number of pressure solver iterations
     max_num_density_correction_iterations: usize,
+    // Number of density minimizer iterations on the last round
+    num_density_correction_iterations: usize,
 
     // Max divergenc error. In relative density deviation per second - 0.01 means 1% density deviation per second.
     max_divergence_error: Real,
     // Maximum number of divergence minimizer iterations
     max_num_divergence_correction_iterations: usize,
+    // Number of divergence minimizer iterations on the last round
+    num_divergence_correction_iterations: usize,
 
-    // Recomputed every frame, but needs to be up to date at start of simulation step.
+    // Recomputed every simulation frame, but needs to be up to date at start of simulation step.
     alpha_values: Vec<Real>,
+
+    // Stiffness sum from last simulation frame to improve convergence.
+    warmstart_stiffness: Vec<Real>,
+    warmstart_kappa: Vec<Real>,
 }
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosityModel> {
     pub fn new(viscosity_model: TViscosityModel, smoothing_length: Real) -> DFSPHSolver<TViscosityModel> {
@@ -41,11 +46,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 
             max_avg_density_error: 0.01 / 100.0, // 0.1% deviation per second.
             max_num_density_correction_iterations: 200,
+            num_density_correction_iterations: 1,
 
             max_divergence_error: 0.1 / 100.0, // 1.0% deviation per second.
             max_num_divergence_correction_iterations: 400,
+            num_divergence_correction_iterations: 0,
 
             alpha_values: vec![],
+            warmstart_kappa: vec![],
+            warmstart_stiffness: vec![],
         }
     }
 
@@ -131,20 +140,23 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             });
     }
 
-    fn correct_velocity_with_density_error(&self, dt: Real, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_error: &[Real]) {
+    fn correct_velocity_with_density_error(&mut self, dt: Real, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_error: &[Real]) {
         microprofile::scope!("DFSPHSolver", "correct_velocity_with_density_error");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let inv_dt = 1.0 / dt;
         let kernel = &self.kernel;
+        let alpha_values = &self.alpha_values;
 
         velocities
             .par_iter_mut()
-            .zip((&fluid_world.particles.positions, density_error, &self.alpha_values).into_par_iter())
+            .zip(self.warmstart_kappa.par_iter_mut())
+            .zip((&fluid_world.particles.positions, density_error, alpha_values).into_par_iter())
             .enumerate()
-            .for_each(|(i, (predicted_velocity, (&ri, density_error_i, alpha_i)))| {
+            .for_each(|(i, ((predicted_velocity, warmstart_kappa_i), (&ri, density_error_i, alpha_i)))| {
                 let mut delta: Vector = Zero::zero(); // gradient to self is zero.
                 let ki = density_error_i * alpha_i;
+                *warmstart_kappa_i += ki;
 
                 // compared to k values in paper already divided with density
                 // collapsing divition of dt² with multiply later -> divide delta with dt
@@ -155,7 +167,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j| {
                         let pos_j = particles.positions[j as usize];
-                        let kj = density_error[j as usize] * self.alpha_values[j as usize];
+                        let kj = density_error[j as usize] * alpha_values[j as usize];
                         delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
                     },
                 );
@@ -173,20 +185,73 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             });
     }
 
+    fn correct_density_error_warmstart(&self, dt: Real, fluid_world: &FluidParticleWorld, velocities: &mut [Vector]) {
+        microprofile::scope!("DFSPHSolver", "correct_density_error_warmstart");
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
+        let inv_dt = 1.0 / dt;
+        let kernel = &self.kernel;
+
+        velocities
+            .par_iter_mut()
+            .zip(self.warmstart_kappa.par_iter())
+            .zip(fluid_world.particles.positions.par_iter())
+            .enumerate()
+            .for_each(|(i, ((predicted_velocity, warmstart_kappa_i), &ri))| {
+                let mut delta: Vector = Zero::zero(); // gradient to self is zero.
+                let ki = *warmstart_kappa_i;
+
+                // collapsing division of dt with multiply later -> nothing!
+
+                let i = i as u32;
+                particles.foreach_neighbor_particle(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.positions[j as usize];
+                        let kj = self.warmstart_kappa[j as usize];
+                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+                particles.foreach_neighbor_particle_boundary(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.boundary_particles[j as usize];
+                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+
+                *predicted_velocity -= inv_dt * delta * particle_mass;
+            });
+    }
+
     fn correct_density_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, velocities: &mut [Vector]) {
         // todo: warmup & general use of values from previous frame
         microprofile::scope!("DFSPHSolver", "correct_density_error");
 
+        // Warm start just wastes compute if there's no turbulence at all.
+        if self.num_density_correction_iterations > 1 {
+            // from SPHlishSPHlash impl. Can't find this in the paper and not quite clear why this is necessary.
+            for k in &mut self.warmstart_kappa {
+                *k = 0.5 * k.max(-0.5 * fluid_world.properties.fluid_density() * fluid_world.properties.fluid_density());
+            }
+            self.correct_density_error_warmstart(dt, fluid_world, velocities);
+        }
+        for k in &mut self.warmstart_kappa {
+            *k = 0.0;
+        }
+
         let mut _density_error = fluid_world.scratch_buffers.get_buffer_real(fluid_world.particles.positions.len());
         let density_error = &mut _density_error.buffer;
 
-        let mut num_iter = 0;
+        self.num_density_correction_iterations = 0;
         loop {
             microprofile::scope!("DFSPHSolver", "density_iteration");
 
             self.compute_density_error(dt, fluid_world, velocities, density_error);
             self.correct_velocity_with_density_error(dt, fluid_world, velocities, density_error);
-            num_iter += 1;
+            self.num_density_correction_iterations += 1;
 
             let avg_density_error: Real = density_error.par_iter().sum::<Real>() / density_error.len() as Real;
             let relative_density_error = avg_density_error / fluid_world.properties.fluid_density();
@@ -196,17 +261,17 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             if relative_density_error * dt < self.max_avg_density_error {
                 // println!(
                 //     "Density error correction finished after {} steps. Density error was {}, that is {}% relative error per second. Target was {}% per second",
-                //     num_iter,
+                //     self.num_density_correction_iterations,
                 //     avg_density_error,
                 //     relative_density_error * dt * 100.0,
                 //     self.max_avg_density_error * 100.0,
                 // );
                 break;
             }
-            if num_iter > self.max_num_density_correction_iterations {
+            if self.num_density_correction_iterations > self.max_num_density_correction_iterations {
                 println!(
                     "Density error correction canceled after {} steps. Density error was {}, that is {}% relative error per second. Target was {}% per second",
-                    num_iter,
+                    self.num_density_correction_iterations,
                     avg_density_error,
                     relative_density_error * dt * 100.0,
                     self.max_avg_density_error * 100.0,
@@ -229,7 +294,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let i = i as u32;
 
                 // particle deficiency?
-                if particles.num_total_neighbors(i) < 5 {
+                if particles.num_total_neighbors(i) < 9 {
                     *density_change_i = 0.0;
                     return;
                 }
@@ -259,22 +324,25 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     }
 
     // todo: this is almost identical to correct_velocity_with_density_error, use this fact!
-    fn correct_velocity_with_divergence_error(&self, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_change: &[Real]) {
+    fn correct_velocity_with_divergence_error(&mut self, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_change: &[Real]) {
         microprofile::scope!("DFSPHSolver", "correct_velocity_with_divergence_error");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let kernel = &self.kernel;
+        let alpha_values = &self.alpha_values;
 
         velocities
             .par_iter_mut()
-            .zip((&fluid_world.particles.positions, density_change, &self.alpha_values).into_par_iter())
+            .zip(self.warmstart_stiffness.par_iter_mut())
+            .zip((&fluid_world.particles.positions, density_change, alpha_values).into_par_iter())
             .enumerate()
-            .for_each(|(i, (predicted_velocity, (&ri, density_change_i, alpha_i)))| {
+            .for_each(|(i, ((predicted_velocity, warmstart_stiffness_i), (&ri, density_change_i, alpha_i)))| {
                 let mut delta: Vector = Zero::zero(); // gradient to self is zero.
                 let ki = density_change_i * alpha_i;
+                *warmstart_stiffness_i += ki;
 
                 // compared to k values in paper already divided with density
-                // collapsing divition of dt with multiply later -> nothing!
+                // collapsing division of dt with multiply later -> nothing!
 
                 let i = i as u32;
                 particles.foreach_neighbor_particle(
@@ -282,7 +350,47 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     #[inline(always)]
                     |j| {
                         let pos_j = particles.positions[j as usize];
-                        let kj = density_change[j as usize] * self.alpha_values[j as usize];
+                        let kj = density_change[j as usize] * alpha_values[j as usize];
+                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+                particles.foreach_neighbor_particle_boundary(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.boundary_particles[j as usize];
+                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    },
+                );
+
+                *predicted_velocity -= delta * particle_mass;
+            });
+    }
+
+    fn correct_divergence_error_warmstart(&self, fluid_world: &FluidParticleWorld, velocities: &mut [Vector]) {
+        microprofile::scope!("DFSPHSolver", "correct_divergence_error_warmstart");
+        let particle_mass = fluid_world.properties.particle_mass();
+        let particles = &fluid_world.particles;
+        let kernel = &self.kernel;
+
+        velocities
+            .par_iter_mut()
+            .zip(self.warmstart_stiffness.par_iter())
+            .zip(fluid_world.particles.positions.par_iter())
+            .enumerate()
+            .for_each(|(i, ((predicted_velocity, warmstart_stiffness_i), &ri))| {
+                let mut delta: Vector = Zero::zero(); // gradient to self is zero.
+                let ki = *warmstart_stiffness_i;
+
+                // collapsing division of dt with multiply later -> nothing!
+
+                let i = i as u32;
+                particles.foreach_neighbor_particle(
+                    i,
+                    #[inline(always)]
+                    |j| {
+                        let pos_j = particles.positions[j as usize];
+                        let kj = self.warmstart_stiffness[j as usize];
                         delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
                     },
                 );
@@ -307,16 +415,28 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         // https://en.wikipedia.org/wiki/Smoothed-particle_hydrodynamics#Operators
         // Divergence = densitychange / density
 
+        // Warm start just wastes compute if there's no turbulence at all.
+        if self.num_divergence_correction_iterations > 1 {
+            // from SPHlishSPHlash impl. Can't find this in the paper and not quite clear why this is necessary.
+            for s in &mut self.warmstart_stiffness {
+                *s = 0.5 * s.max(-0.5 * fluid_world.properties.fluid_density() * fluid_world.properties.fluid_density());
+            }
+            self.correct_divergence_error_warmstart(fluid_world, velocities);
+        }
+        for s in &mut self.warmstart_stiffness {
+            *s = 0.0;
+        }
+
         let mut _density_change = fluid_world.scratch_buffers.get_buffer_real(fluid_world.particles.positions.len());
         let density_change = &mut _density_change.buffer;
 
-        let mut num_iter = 0;
+        self.num_divergence_correction_iterations = 0;
         loop {
             microprofile::scope!("DFSPHSolver", "density_change_iteration");
 
             self.compute_density_change(fluid_world, velocities, density_change);
             self.correct_velocity_with_divergence_error(fluid_world, velocities, density_change);
-            num_iter += 1;
+            self.num_divergence_correction_iterations += 1;
 
             let avg_divergence: Real =
                 density_change.par_iter().sum::<Real>() / density_change.len() as Real / fluid_world.properties.fluid_density();
@@ -326,17 +446,17 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             if avg_divergence * dt < self.max_divergence_error {
                 // println!(
                 //     "Divergence error correction finished after {} steps. Avg divergence was {}, that is {}% per second. Target was {}% per second",
-                //     num_iter,
+                //     self.num_divergence_correction_iterations,
                 //     avg_divergence,
                 //     avg_divergence * dt * 100.0,
                 //     self.max_divergence_error * 100.0,
                 // );
                 break;
             }
-            if num_iter > self.max_num_divergence_correction_iterations {
+            if self.num_divergence_correction_iterations > self.max_num_divergence_correction_iterations {
                 println!(
                     "Divergence error correction canceled after {} steps. Avg divergence was {}, that is {}% per second. Target was {}% per second",
-                    num_iter,
+                    self.num_divergence_correction_iterations,
                     avg_divergence,
                     avg_divergence * dt * 100.0,
                     self.max_divergence_error * 100.0,
@@ -350,6 +470,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
 impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver<TViscosityModel> {
     fn clear_cached_data(&mut self) {
         self.alpha_values.clear();
+        self.warmstart_stiffness.clear();
+        self.warmstart_kappa.clear();
+        self.num_divergence_correction_iterations = 0;
+        self.num_density_correction_iterations = 0;
     }
 
     fn simulation_step(&mut self, fluid_world: &mut FluidParticleWorld, time_manager: &mut TimeManager) {
@@ -359,6 +483,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         // Todo: Not happy about the way added particles are handled here. This sort of works for adding, but removing this way is impossible with this design!
         if self.alpha_values.len() != fluid_world.particles.positions.len() {
             self.alpha_values.resize(fluid_world.particles.positions.len(), 0.0 as Real);
+            self.warmstart_stiffness.resize(fluid_world.particles.positions.len(), 0.0 as Real);
+            self.warmstart_kappa.resize(fluid_world.particles.positions.len(), 0.0 as Real);
 
             // todo: Update only new particles.. HOW? better would be to only effectively add later
             fluid_world.update_neighborhood_datastructure(Vec::new(), vec![&mut self.alpha_values]);

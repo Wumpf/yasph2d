@@ -203,6 +203,7 @@ impl FluidParticleWorld {
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
         let mass = self.properties.particle_mass();
+        let fluid_density = self.properties.fluid_density;
         let neighborhood = &self.particles.neighborhood;
         let positions = &self.particles.positions;
         let boundary_positions = &self.particles.boundary_particles;
@@ -235,6 +236,10 @@ impl FluidParticleWorld {
                         *density += density_contribution;
                     },
                 );
+
+                // Pressure clamping to work around particle deficiency problem. Good explanation here:
+                // https://github.com/InteractiveComputerGraphics/SPlisHSPlasH/issues/36#issuecomment-495883932
+                *density = density.max(fluid_density);
             });
     }
 
