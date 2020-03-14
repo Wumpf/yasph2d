@@ -1,6 +1,7 @@
 use cgmath::prelude::*;
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
 
 use super::appendbuffer::AppendBuffer;
 use super::scratch_buffer::ScratchBufferStore;
@@ -66,6 +67,7 @@ impl GridProperties {
 #[derive(Default)]
 struct CompactMortonCellGrid {
     cells: Vec<MortonCell>,
+    morton_to_cell: HashMap<u32, usize>,
 }
 
 impl CompactMortonCellGrid {
@@ -138,9 +140,11 @@ impl CompactMortonCellGrid {
         // create cells.
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
         self.cells.clear();
+        self.morton_to_cell.clear();
         let mut prev_cidx = MortonCellIndex::max_value();
         for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
             if cidx != prev_cidx {
+                self.morton_to_cell.insert(cidx, self.cells.len());
                 self.cells.push(MortonCell { first_particle: pidx, cidx });
                 prev_cidx = cidx;
             }
@@ -151,94 +155,53 @@ impl CompactMortonCellGrid {
         }); // sentinel cell
     }
 
-    // finds cell array index first cell that has an equal or bigger for a given MortonCellIndex
-    fn find_next_cell(cells: &[MortonCell], cidx: MortonCellIndex) -> usize {
-        const LINEAR_SEARCH_THRESHHOLD: usize = 16;
-        let mut min = 0;
-        let mut max = cells.len(); // exclusive
-        let mut range = max - min;
-        while range > LINEAR_SEARCH_THRESHHOLD {
-            range /= 2;
-            let mid = min + range;
-            match unsafe { cells.get_unchecked(mid) }.cidx.cmp(&cidx) {
-                std::cmp::Ordering::Greater => max = mid,
-                std::cmp::Ordering::Less => min = mid,
-                std::cmp::Ordering::Equal => return mid,
-            }
-        }
-        for pos in min..max {
-            if unsafe { cells.get_unchecked(pos) }.cidx >= cidx {
-                return pos;
-            }
-        }
-        max
-    }
-
     fn get_particle_runs_in_neighborbox(&self, cidx: MortonCellIndex) -> MortonCellNeihborhoodRuns {
         let pos = MortonCellPos::from_cidx(cidx);
-        let cidx_min = MortonCellPos { x: pos.x - 1, y: pos.y - 1 }.to_cidx();
-        let cidx_max = MortonCellPos { x: pos.x + 1, y: pos.y + 1 }.to_cidx();
 
-        let cidx_min_xbits = cidx_min & super::morton::MORTON_XBITS;
-        let cidx_min_ybits = cidx_min & super::morton::MORTON_YBITS;
-        let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
-        let cidx_max_ybits = cidx_max & super::morton::MORTON_YBITS;
-
-        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
-
-        // Note: Already tried doing this with iterators. it's hard to do and slow!
-        let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
-        let mut cell = self.cells[cell_arrayidx];
+        let mut requested_cells = [
+            MortonCellPos { x: pos.x - 1, y: pos.y - 1 }.to_cidx(),
+            MortonCellPos { x: pos.x + 0, y: pos.y - 1 }.to_cidx(),
+            MortonCellPos { x: pos.x + 1, y: pos.y - 1 }.to_cidx(),
+            MortonCellPos { x: pos.x - 1, y: pos.y + 0 }.to_cidx(),
+            cidx,
+            MortonCellPos { x: pos.x + 1, y: pos.y + 0 }.to_cidx(),
+            MortonCellPos { x: pos.x - 1, y: pos.y + 1 }.to_cidx(),
+            MortonCellPos { x: pos.x + 0, y: pos.y + 1 }.to_cidx(),
+            MortonCellPos { x: pos.x + 1, y: pos.y + 1 }.to_cidx(),
+        ];
+        requested_cells.sort();
 
         let mut runs = MortonCellNeihborhoodRuns {
             particle_index_runs: [(0, 0); 5],
             num_runs: 0,
         };
 
-        while cell.cidx <= cidx_max {
-            // skip until cell is in rect
-            let mut num_misses = 0;
-            while !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
-                num_misses += 1;
+        let mut reqi = 0;
+        while reqi < requested_cells.len() {
+            if let Some(&cellidx) = self.morton_to_cell.get(&requested_cells[reqi]) {
+                let run_start = self.cells[cellidx].first_particle;
 
-                // Try next. Prefer to just grind the array, but at some point use bigmin to jump ahead.
-                if num_misses > MAX_CONSECUTIVE_CELL_MISSES {
-                    let expected_next_cidx = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
-                    cell_arrayidx += Self::find_next_cell(&self.cells[cell_arrayidx..], expected_next_cidx);
-                    assert!(expected_next_cidx > cell.cidx);
+                reqi += 1;
+                let mut cellidx_end = cellidx + 1;
+                while reqi < requested_cells.len() &&
+                    self.cells[cellidx_end].cidx == requested_cells[reqi] {
+                    reqi += 1;
+                    cellidx_end += 1;
+                }
+
+                let run_end = self.cells[cellidx_end].first_particle;
+
+                // append?
+                if runs.num_runs > 0 && runs.particle_index_runs[runs.num_runs-1].1 == run_start {
+                    runs.particle_index_runs[runs.num_runs-1] = (runs.particle_index_runs[runs.num_runs-1].0, run_end);
                 } else {
-                    cell_arrayidx += 1;
+                    runs.particle_index_runs[runs.num_runs] = (run_start, run_end);
+                    runs.num_runs += 1;
                 }
-                cell = self.cells[cell_arrayidx];
 
-                if cell.cidx > cidx_max {
-                    return runs;
-                }
+            } else {
+                reqi += 1;
             }
-
-            // find particle run
-            runs.particle_index_runs[runs.num_runs].0 = cell.first_particle;
-            loop {
-                cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
-                cell = self.cells[cell_arrayidx];
-                if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
-                    break;
-                }
-            }
-            runs.particle_index_runs[runs.num_runs].1 = cell.first_particle;
-            runs.num_runs += 1;
-            if runs.num_runs == runs.particle_index_runs.len() {
-                break;
-            }
-
-            assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
-
-            // We know current cell isn't in the rect, so skip it.
-            cell_arrayidx += 1;
-            if cell_arrayidx >= self.cells.len() {
-                break;
-            }
-            cell = self.cells[cell_arrayidx];
         }
 
         runs
