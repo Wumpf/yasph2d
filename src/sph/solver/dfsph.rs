@@ -227,7 +227,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     }
 
     fn correct_density_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, velocities: &mut [Vector]) {
-        // todo: warmup & general use of values from previous frame
         microprofile::scope!("DFSPHSolver", "correct_density_error");
 
         // Warm start just wastes compute if there's no turbulence at all.
@@ -281,7 +280,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         }
     }
 
-    // todo: this is almost identical to compute_density_error, use this fact!
     fn compute_density_change(&self, fluid_world: &FluidParticleWorld, velocities: &[Vector], density_change: &mut [Real]) {
         microprofile::scope!("DFSPHSolver", "compute_density_change");
         let particle_mass = fluid_world.properties.particle_mass();
@@ -319,11 +317,10 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                     },
                 );
                 *density_change_i = delta * particle_mass;
-                *density_change_i = density_change_i.max(0.0); // todo: what's the explanation for this?
+                *density_change_i = density_change_i.max(0.0); // clamp density loss
             });
     }
 
-    // todo: this is almost identical to correct_velocity_with_density_error, use this fact!
     fn correct_velocity_with_divergence_error(&mut self, fluid_world: &FluidParticleWorld, velocities: &mut [Vector], density_change: &[Real]) {
         microprofile::scope!("DFSPHSolver", "correct_velocity_with_divergence_error");
         let particle_mass = fluid_world.properties.particle_mass();
@@ -408,7 +405,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
     }
 
     fn correct_divergence_error(&mut self, dt: Real, fluid_world: &mut FluidParticleWorld, velocities: &mut [Vector]) {
-        // todo: warmup & general use of values from previous frame
         microprofile::scope!("DFSPHSolver", "correct_divergence_error");
 
         // Relationship between density change and divergence:

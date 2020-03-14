@@ -287,6 +287,8 @@ impl NeighborLists {
         neighbor_positions: &[Point],
         neighbor_cell_grid: &CompactMortonCellGrid,
     ) -> Result<usize, usize> {
+        microprofile::scope!("NeighborhoodSearch", "NeighborLists::try_update");
+
         const MAX_NUM_NEIGHBORS: usize = 64; // todo: At least pretend to be scientific about this value.
 
         unsafe {

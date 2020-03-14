@@ -3,10 +3,6 @@ YaSPH2D
 "Yet another SPH" .. thing.. in 2D!\
 Playing around with Smoothed Particle Hydrodynamics simulation in Rust. All 2d for now.
 
-Has something of a library, but right now the separation with the test application is too loose for that (also lack of docs and tests to call it a real library ;-)). Not sure where it will end up, maybe it's gonna stay this way, maybe I will end up making game, maybe I focus on non-interactive simulations instead.
-Not even sure yet if I ditch the 2d thing and make it 3d.
-(Note: Mixing is possible but seems like a bad idea since some parameters go all over the place and it makes it really hard to do the _actually cool_ optimizations ;-))
-
 Implements solvers using
 * Weakly Compressible SPH (WCSPH)
 * DFSPH
