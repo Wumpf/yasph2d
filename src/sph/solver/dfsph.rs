@@ -8,7 +8,7 @@ use crate::units::*;
 use cgmath::prelude::*;
 use rayon::prelude::*;
 
-// WCSPH implementation as described in
+// DFSPH implementation as described in
 // Divergence-Free SPH for Incompressible and Viscious Fluids
 // https://animation.rwth-aachen.de/publication/051/
 pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
@@ -159,7 +159,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 *warmstart_kappa_i += ki;
 
                 // compared to k values in paper already divided with density
-                // collapsing divition of dt² with multiply later -> divide delta with dt
+                // collapsing deviation of dt² with multiply later -> divide delta with dt
 
                 let i = i as u32;
                 particles.foreach_neighbor_particle(
