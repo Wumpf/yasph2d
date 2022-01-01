@@ -23,7 +23,7 @@ pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     // Number of density minimizer iterations on the last round
     num_density_correction_iterations: usize,
 
-    // Max divergenc error. In relative density deviation per second - 0.01 means 1% density deviation per second.
+    // Max divergence error. In relative density deviation per second - 0.01 means 1% density deviation per second.
     max_divergence_error: Real,
     // Maximum number of divergence minimizer iterations
     max_num_divergence_correction_iterations: usize,

@@ -4,6 +4,7 @@ use ggez::graphics::Rect;
 use ggez::{conf, graphics, timer, Context, GameResult};
 use microprofile;
 use std::collections::VecDeque;
+use std::ops::Mul;
 use std::time::{Duration, Instant};
 
 mod camera;
@@ -21,8 +22,8 @@ fn main() -> GameResult {
                 .vsync(false),
         )
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
-    let (ctx, event_loop) = &mut context_builder.build()?;
-    let state = &mut MainState::new(ctx);
+    let (mut ctx, event_loop) = context_builder.build()?;
+    let state = MainState::new(&mut ctx);
 
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
@@ -103,9 +104,9 @@ fn heatmap_color(t: f32) -> graphics::Color {
 impl MainState {
     pub fn new(ctx: &mut Context) -> MainState {
         let mut fluid_world = sph::FluidParticleWorld::new(
-            2.0,    // smoothing factor
-            5000.0, // #particles/m²
-            100.0,  // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
+            2.0,     // smoothing factor
+            10000.0, // #particles/m²
+            100.0,   // density of water (? this is 2d, not 3d where it's 1000 kg/m³)
         );
         Self::reset_fluid(&mut fluid_world);
         let solver = Solver::DFSPH; // Solver::WSCSPH;
@@ -127,7 +128,7 @@ impl MainState {
             RenderPoint::origin(),
             particle_radius as f32,
             0.0003,
-            graphics::WHITE,
+            graphics::Color::WHITE,
         )
         .unwrap();
 
@@ -188,7 +189,7 @@ impl MainState {
 
         let fps = timer::fps(ctx);
         let average_simulation_step_duration =
-            self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len() as u32;
+            self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len().max(1) as u32;
 
         let simulation_info_text = format!(
             "Frame Processing: {:3.2}ms ({:4} steps)\nSingle Step (averaged over {}): {:.2}ms, last timestep length {:.4}ms\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
@@ -212,7 +213,7 @@ impl MainState {
 
             UpdateMode::Recording => format!("RECORDING\n{}", simulation_info_text,),
         });
-        graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::WHITE))?;
+        graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::Color::WHITE))?;
         if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME && self.update_mode == UpdateMode::RealTime {
             graphics::draw(
                 ctx,
@@ -226,6 +227,14 @@ impl MainState {
 
     fn draw_fluid(&mut self, ctx: &mut Context) -> GameResult {
         microprofile::scope!("MainState", "draw fluid");
+
+        let camera_matrix = self.camera.transformation_matrix();
+
+        // graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam
+        // {
+        //     color: graphics::Color::WHITE,
+        //     trans: todo!(),
+        // })?;
 
         let boundary_color = graphics::Color {
             r: 0.2,
@@ -242,19 +251,25 @@ impl MainState {
         {
             let c = heatmap_color((a.magnitude() * 0.1) as f32);
             let rp: RenderPoint = RenderPoint::new(p.x, p.y);
-            graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam::default().dest(rp).color(c))?;
+            graphics::draw(
+                ctx,
+                &self.particle_mesh,
+                ggez::graphics::DrawParam::default()
+                    .color(c)
+                    .transform(camera_matrix.mul(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0)))),
+            )?;
         }
         for p in self.fluid_world.particles.boundary_particles.iter() {
             let rp: RenderPoint = RenderPoint::new(p.x, p.y);
             graphics::draw(
                 ctx,
                 &self.particle_mesh,
-                ggez::graphics::DrawParam::default().dest(rp).color(boundary_color),
+                ggez::graphics::DrawParam::default()
+                    .color(boundary_color)
+                    .transform(camera_matrix.mul(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0)))),
             )?;
         }
 
-        graphics::pop_transform(ctx);
-        graphics::apply_transformations(ctx)?;
         Ok(())
     }
 
@@ -286,7 +301,7 @@ impl MainState {
     }
 }
 
-impl EventHandler for MainState {
+impl EventHandler<ggez::GameError> for MainState {
     fn key_down_event(&mut self, ctx: &mut Context, keycode: KeyCode, _keymods: KeyMods, repeat: bool) {
         match keycode {
             KeyCode::Escape => {
@@ -320,7 +335,7 @@ impl EventHandler for MainState {
         match self.update_mode {
             UpdateMode::RealTime => {
                 // Note that we _could_ influence the simulation timestep target every frame depending on the delta frame time.
-                // However, that would make our simulation dependend on external, non-deterministic factors and we don't want that.
+                // However, that would make our simulation dependent on external, non-deterministic factors and we don't want that.
                 if let sph::TimeManagerConfiguration::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
                     *timestep_target_frame = sph::AdaptiveTimeStepTarget::None;
                 }
@@ -328,9 +343,9 @@ impl EventHandler for MainState {
                 let target_simulation_time =
                     (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
                 while self.time_manager.passed_time() < target_simulation_time {
-                    //if self.time_manager.passed_time() > 2.0 {
-                    //    break;
-                    //}
+                    if self.time_manager.passed_time() > 4.0 {
+                        break;
+                    }
 
                     // If we can't process fast enough, we give up and accept that there is an offset between realtime and simulation time.
                     if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME {
@@ -370,8 +385,6 @@ impl EventHandler for MainState {
         microprofile::scope!("MainState", "draw");
 
         graphics::clear(ctx, [0.4, 0.4, 0.45, 1.0].into());
-        graphics::push_transform(ctx, Some(self.camera.transformation_matrix()));
-        graphics::apply_transformations(ctx)?;
 
         self.draw_fluid(ctx)?;
         self.draw_text(ctx)?;
