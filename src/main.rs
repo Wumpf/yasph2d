@@ -1,10 +1,9 @@
 use cgmath::prelude::*;
 use ggez::event::{self, EventHandler, KeyCode, KeyMods};
-use ggez::graphics::Rect;
+use ggez::graphics::{DrawParam, Rect};
 use ggez::{conf, graphics, timer, Context, GameResult};
 use microprofile;
 use std::collections::VecDeque;
-use std::ops::Mul;
 use std::time::{Duration, Instant};
 
 mod camera;
@@ -52,7 +51,7 @@ struct MainState {
     sph_solver: Box<dyn sph::Solver>,
 
     camera: Camera,
-    particle_mesh: graphics::Mesh,
+    particle_mesh_batch: graphics::MeshBatch,
 
     simulation_step_duration_history: VecDeque<Duration>,
     simulation_processing_time_frame: Duration,
@@ -131,6 +130,7 @@ impl MainState {
             graphics::Color::WHITE,
         )
         .unwrap();
+        let particle_mesh_batch = graphics::MeshBatch::new(particle_mesh).unwrap();
 
         let cfl_factor = match solver {
             Solver::WSCSPH => 0.2,
@@ -147,14 +147,14 @@ impl MainState {
             },
         );
 
-        MainState {
+        let mut state = MainState {
             update_mode: UpdateMode::RealTime,
             fluid_world,
             time_manager,
             sph_solver,
 
             camera: Camera::center_around_world_rect(graphics::screen_coordinates(ctx), Rect::new(-0.1, -0.1, 2.1, 1.6)),
-            particle_mesh,
+            particle_mesh_batch,
 
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
             simulation_processing_time_frame: Default::default(),
@@ -165,7 +165,37 @@ impl MainState {
             simulation_to_realtime_offset: Default::default(),
 
             frame_counter: 0,
+        };
+
+        state.reset_mesh_batch(ctx);
+        state
+    }
+
+    fn reset_mesh_batch(&mut self, ctx: &mut Context) {
+        self.particle_mesh_batch.clear();
+
+        let boundary_color = graphics::Color {
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+            a: 1.0,
+        };
+
+        for p in self.fluid_world.particles.boundary_particles.iter() {
+            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
+            self.particle_mesh_batch.add(
+                ggez::graphics::DrawParam::default()
+                    .color(boundary_color)
+                    .transform(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0))),
+            );
         }
+        for _ in 0..self.fluid_world.particles.positions.len() {
+            self.particle_mesh_batch.add(DrawParam::default());
+        }
+
+        self.particle_mesh_batch
+            .flush_range(ctx, graphics::MeshIdx(0), self.fluid_world.particles.boundary_particles.len())
+            .unwrap();
     }
 
     fn reset_fluid(fluid_world: &mut sph::FluidParticleWorld) {
@@ -228,47 +258,37 @@ impl MainState {
     fn draw_fluid(&mut self, ctx: &mut Context) -> GameResult {
         microprofile::scope!("MainState", "draw fluid");
 
-        let camera_matrix = self.camera.transformation_matrix();
-
-        // graphics::draw(ctx, &self.particle_mesh, ggez::graphics::DrawParam
-        // {
-        //     color: graphics::Color::WHITE,
-        //     trans: todo!(),
-        // })?;
-
-        let boundary_color = graphics::Color {
-            r: 0.2,
-            g: 0.2,
-            b: 0.2,
-            a: 1.0,
-        };
-        for (p, a) in self
+        for ((p, a), param) in self
             .fluid_world
             .particles
             .positions
             .iter()
             .zip(self.fluid_world.particles.velocities.iter())
+            .zip(
+                self.particle_mesh_batch
+                    .get_instance_params_mut()
+                    .iter_mut()
+                    .skip(self.fluid_world.particles.boundary_particles.len()),
+            )
         {
-            let c = heatmap_color((a.magnitude() * 0.1) as f32);
+            param.color = heatmap_color((a.magnitude() * 0.1) as f32);
             let rp: RenderPoint = RenderPoint::new(p.x, p.y);
-            graphics::draw(
-                ctx,
-                &self.particle_mesh,
-                ggez::graphics::DrawParam::default()
-                    .color(c)
-                    .transform(camera_matrix.mul(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0)))),
-            )?;
+            param.trans = graphics::Transform::Matrix(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0)).into());
         }
-        for p in self.fluid_world.particles.boundary_particles.iter() {
-            let rp: RenderPoint = RenderPoint::new(p.x, p.y);
-            graphics::draw(
-                ctx,
-                &self.particle_mesh,
-                ggez::graphics::DrawParam::default()
-                    .color(boundary_color)
-                    .transform(camera_matrix.mul(cgmath::Matrix4::from_translation(cgmath::vec3(rp.x, rp.y, 0.0)))),
-            )?;
-        }
+
+        self.particle_mesh_batch.flush_range(
+            ctx,
+            graphics::MeshIdx(self.fluid_world.particles.boundary_particles.len()),
+            self.fluid_world.particles.positions.len(),
+        )?;
+
+        self.particle_mesh_batch.draw(
+            ctx,
+            graphics::DrawParam {
+                trans: graphics::Transform::Matrix(self.camera.transformation_matrix().into()),
+                ..Default::default()
+            },
+        )?;
 
         Ok(())
     }
