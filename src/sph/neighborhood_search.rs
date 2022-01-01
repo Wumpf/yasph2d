@@ -36,8 +36,8 @@ struct MortonCell {
 }
 
 // Runs of particle indices for a MortonCell and its eight neighbors.
-struct MortonCellNeihborhoodRuns {
-    // In a 3x3 2D morton box there are at max 5 continous runs (can be less!)
+struct MortonCellNeighborhoodRuns {
+    // In a 3x3 2D morton box there are at max 5 continuos runs (can be less!)
     particle_index_runs: [(usize, usize); 5],
     num_runs: usize, // remove? not really needed I guess
 }
@@ -96,7 +96,7 @@ impl CompactMortonCellGrid {
         // we know that most particles have not changed since last frame
         // -> use insertion sort and building permutation array into it as well!
         // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
-        // ... just a bit harder to parallize this way.
+        // ... just a bit harder to parallelize this way.
         for (i, &pos) in positions.iter().enumerate() {
             let cidx = grid.position_to_cidx(pos);
 
@@ -174,7 +174,7 @@ impl CompactMortonCellGrid {
         max
     }
 
-    fn get_particle_runs_in_neighborbox(&self, cidx: MortonCellIndex) -> MortonCellNeihborhoodRuns {
+    fn get_particle_runs_in_neighborbox(&self, cidx: MortonCellIndex) -> MortonCellNeighborhoodRuns {
         let pos = MortonCellPos::from_cidx(cidx);
         let cidx_min = MortonCellPos { x: pos.x - 1, y: pos.y - 1 }.to_cidx();
         let cidx_max = MortonCellPos { x: pos.x + 1, y: pos.y + 1 }.to_cidx();
@@ -190,7 +190,7 @@ impl CompactMortonCellGrid {
         let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
         let mut cell = self.cells[cell_arrayidx];
 
-        let mut runs = MortonCellNeihborhoodRuns {
+        let mut runs = MortonCellNeighborhoodRuns {
             particle_index_runs: [(0, 0); 5],
             num_runs: 0,
         };
@@ -245,7 +245,7 @@ impl CompactMortonCellGrid {
     }
 
     // todo: remove, impl already no longer optimal
-    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(usize) -> ()) {
+    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(usize)) {
         let runs = self.get_particle_runs_in_neighborbox(grid.position_to_cidx(position));
         for range in runs.particle_index_runs.iter() {
             for j in range.0..range.1 {
@@ -369,7 +369,7 @@ impl NeighborLists {
     }
 
     #[inline]
-    pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex) -> ()) {
+    pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
         unsafe {
             let ranges = &*self.neighborhood_list_ranges.list.get();
             let range = *ranges.get_unchecked(particle as usize);
@@ -469,7 +469,7 @@ impl NeighborhoodSearch {
     }
 
     #[inline]
-    pub fn foreach_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    pub fn foreach_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         self.particle_particle_neighbors.foreach_neighbor(particle, f);
     }
 
@@ -479,7 +479,7 @@ impl NeighborhoodSearch {
     }
 
     #[inline]
-    pub fn foreach_boundary_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    pub fn foreach_boundary_neighbor(&self, particle: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         self.particle_boundary_neighbors.foreach_neighbor(particle, f);
     }
 
@@ -488,11 +488,11 @@ impl NeighborhoodSearch {
         self.particle_boundary_neighbors.num_neighbors(particle)
     }
 
-    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {
+    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize)) {
         self.cellgrid_particles.foreach_potential_neighbor(&self.grid, position, f)
     }
 
-    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(usize) -> ()) {
+    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(usize)) {
         self.cellgrid_boundary.foreach_potential_neighbor(&self.grid, position, f)
     }
 }

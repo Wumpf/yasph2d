@@ -478,9 +478,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         // ensure densities and alpha factors were initialized previously ("warmup")
         // Todo: Not happy about the way added particles are handled here. This sort of works for adding, but removing this way is impossible with this design!
         if self.alpha_values.len() != fluid_world.particles.positions.len() {
-            self.alpha_values.resize(fluid_world.particles.positions.len(), 0.0 as Real);
-            self.warmstart_stiffness.resize(fluid_world.particles.positions.len(), 0.0 as Real);
-            self.warmstart_kappa.resize(fluid_world.particles.positions.len(), 0.0 as Real);
+            self.alpha_values.resize(fluid_world.particles.positions.len(), 0.0);
+            self.warmstart_stiffness.resize(fluid_world.particles.positions.len(), 0.0);
+            self.warmstart_kappa.resize(fluid_world.particles.positions.len(), 0.0);
 
             // todo: Update only new particles.. HOW? better would be to only effectively add later
             fluid_world.update_neighborhood_datastructure(Vec::new(), vec![&mut self.alpha_values]);

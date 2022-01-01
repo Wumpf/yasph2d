@@ -2,7 +2,6 @@ use cgmath::prelude::*;
 use ggez::event::{self, EventHandler, KeyCode, KeyMods};
 use ggez::graphics::{DrawParam, Rect};
 use ggez::{conf, graphics, timer, Context, GameResult};
-use microprofile;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -35,11 +34,11 @@ enum UpdateMode {
     RealTime,
     Recording,
 }
+#[allow(dead_code)]
+#[allow(clippy::upper_case_acronyms)]
 #[derive(PartialEq)]
 enum Solver {
-    #[allow(dead_code)]
     WSCSPH,
-    #[allow(dead_code)]
     DFSPH,
 }
 

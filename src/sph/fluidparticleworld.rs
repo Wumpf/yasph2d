@@ -24,20 +24,20 @@ pub struct Particles {
 
 impl Particles {
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    pub(super) fn foreach_neighbor_particle(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         Self::foreach_neighbor_particle_internal(&self.neighborhood, pidx, f)
     }
     #[inline]
-    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         neighborhood.foreach_neighbor(pidx, f);
     }
 
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_boundary(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    pub(super) fn foreach_neighbor_particle_boundary(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         Self::foreach_neighbor_particle_internal_boundary_new(&self.neighborhood, pidx, f)
     }
     #[inline]
-    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex) -> ()) {
+    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
         neighborhood.foreach_boundary_neighbor(pidx, f);
     }
 
@@ -217,7 +217,7 @@ impl FluidParticleWorld {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
                 let i = i as u32;
                 Particles::foreach_neighbor_particle_internal(
-                    &neighborhood,
+                    neighborhood,
                     i,
                     #[inline(always)]
                     |j| {
@@ -227,7 +227,7 @@ impl FluidParticleWorld {
                     },
                 );
                 Particles::foreach_neighbor_particle_internal_boundary_new(
-                    &neighborhood,
+                    neighborhood,
                     i,
                     #[inline(always)]
                     |j| {

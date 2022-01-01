@@ -1,5 +1,5 @@
-pub const MORTON_XBITS: u32 = 0b01010101_01010101_01010101_01010101;
-pub const MORTON_YBITS: u32 = 0b10101010_10101010_10101010_10101010;
+pub const MORTON_XBITS: u32 = 0b0101_0101_0101_0101_0101_0101_0101_0101;
+pub const MORTON_YBITS: u32 = 0b1010_1010_1010_1010_1010_1010_1010_1010;
 
 // Encodes two 16(!) bit numbers into a single 32bit morton code by interleaving the bits.
 //
