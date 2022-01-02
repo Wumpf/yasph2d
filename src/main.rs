@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 mod camera;
 
 use camera::*;
-use yasph2d::sph::{self, SimulationStepResult};
-use yasph2d::units::*;
+use sph::timemanager::*;
+use yasph2d::{sph, units::*};
 
 fn main() -> GameResult {
     let context_builder = ggez::ContextBuilder::new("YaSPH2D", "AndreasR")
@@ -46,13 +46,12 @@ struct MainState {
     update_mode: UpdateMode,
     //solver: Solver,
     fluid_world: sph::FluidParticleWorld,
-    time_manager: sph::TimeManager,
+    time_manager: TimeManager,
     sph_solver: Box<dyn sph::Solver>,
 
     camera: Camera,
     particle_mesh_batch: graphics::MeshBatch,
 
-    // TODO: Move to timemanager?
     simulation_step_duration_history: VecDeque<Duration>,
     simulation_processing_time_frame: Duration,
     simulation_processing_time_total: Duration,
@@ -61,13 +60,6 @@ struct MainState {
 
 const SIMULATION_STEP_HISTORY_LENGTH: usize = 80;
 const RECORDING_FPS: f64 = 60.0;
-
-// The maximum length of a single step we're willing to do in a single frame.
-// If we need to compute more steps than this in a single frame, we give up and slow down the sim.
-// -> this is correlated but not equal to the minimum target framerate.
-// TODO: This should be part of the timemanager
-// TODO: This way of dropping simulation steps won't keep a certain framerate neither for CPU nor GPU driven sim.
-const MAX_SIMULATED_TIME_PER_FRAME: f64 = 1.0 / 30.0;
 
 fn clamp(v: f32, min: f32, max: f32) -> f32 {
     if v < min {
@@ -125,15 +117,16 @@ impl MainState {
             Solver::DFSPH => 1.0,
         };
 
-        let time_manager = sph::TimeManager::new(
+        let time_manager = TimeManager::new(TimerConfig {
             //sph::TimeManagerConfiguration::FixedTimeStep(TARGET_FRAME_SIMDURATION / 20.0));
-            sph::SimulationStepConfig::AdaptiveTimeStep {
+            step_config: SimulationStepConfig::AdaptiveTimeStep {
                 timestep_max: Duration::from_secs_f32(1.0 / 120.0 / 3.0), // Ideally this is set to 1/RefreshRate
                 timestep_min: Duration::from_secs_f32(1.0 / 60.0 / 400.0), // Don't do steps that results in more than a 400 steps for an image on a classic 60Hz display
-                timestep_target_frame: sph::AdaptiveTimeStepTarget::None,
+                timestep_target_frame: AdaptiveTimeStepTarget::None,
                 cfl_factor,
             },
-        );
+            max_simulated_time_per_frame: Duration::from_secs_f64(1.0 / 30.0),
+        });
 
         let mut state = MainState {
             update_mode: UpdateMode::RealTime,
@@ -313,8 +306,21 @@ impl EventHandler<ggez::GameError> for MainState {
             KeyCode::R => {
                 if !repeat {
                     self.update_mode = if self.update_mode == UpdateMode::RealTime {
+                        // Note that we _could_ influence the simulation timestep target every frame depending on the delta frame time.
+                        // However, that would make our simulation dependent on external, non-deterministic factors and we don't want that.
+                        if let SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = &mut self.time_manager.config_mut().step_config
+                        {
+                            *timestep_target_frame = AdaptiveTimeStepTarget::None;
+                        }
+
                         UpdateMode::Recording
                     } else {
+                        // When doing recording, we want to hit the exact frame times.
+                        if let SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = &mut self.time_manager.config_mut().step_config
+                        {
+                            *timestep_target_frame = AdaptiveTimeStepTarget::TargetFrameLength(Duration::from_secs_f64(1.0 / RECORDING_FPS));
+                        }
+
                         UpdateMode::RealTime
                     };
                     self.reset_simulation();
@@ -331,44 +337,22 @@ impl EventHandler<ggez::GameError> for MainState {
 
         self.simulation_processing_time_frame = Duration::from_secs(0);
 
-        // TODO: Part of this logic should be inside timemanager?
-        match self.update_mode {
-            UpdateMode::RealTime => {
-                // Note that we _could_ influence the simulation timestep target every frame depending on the delta frame time.
-                // However, that would make our simulation dependent on external, non-deterministic factors and we don't want that.
-                if let sph::SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
-                    *timestep_target_frame = sph::AdaptiveTimeStepTarget::None;
-                }
+        if self.update_mode == UpdateMode::Recording {
+            self.time_manager.force_frame_delta(Duration::from_secs_f64(1.0 / RECORDING_FPS));
+        }
 
-                loop {
-                    match self
-                        .time_manager
-                        .simulation_frame_loop(Duration::from_secs_f64(MAX_SIMULATED_TIME_PER_FRAME))
-                    {
-                        SimulationStepResult::PerformStepAndCallAgain => self.single_sim_step(),
-                        SimulationStepResult::CaughtUpWithRenderTime => {
-                            self.simulation_is_realtime = true;
-                            break;
-                        }
-                        SimulationStepResult::DroppingSimulationSteps => {
-                            self.simulation_is_realtime = false;
-                            break;
-                        }
-                    };
+        loop {
+            match self.time_manager.simulation_frame_loop() {
+                SimulationStepResult::PerformStepAndCallAgain => self.single_sim_step(),
+                SimulationStepResult::CaughtUpWithRenderTime => {
+                    self.simulation_is_realtime = true;
+                    break;
                 }
-            }
-            UpdateMode::Recording => {
-                let frame_length = Duration::from_secs_f64(1.0 / RECORDING_FPS);
-                self.time_manager.force_frame_delta(frame_length);
-
-                // When doing recording, we want to hit the exact frame times.
-                if let sph::SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
-                    *timestep_target_frame = sph::AdaptiveTimeStepTarget::TargetFrameLength(frame_length);
+                SimulationStepResult::DroppingSimulationSteps => {
+                    self.simulation_is_realtime = false;
+                    break;
                 }
-                while self.time_manager.simulation_frame_loop(Duration::from_secs(u64::MAX)) == SimulationStepResult::PerformStepAndCallAgain {
-                    self.single_sim_step();
-                }
-            }
+            };
         }
 
         microprofile::flip!();
@@ -386,7 +370,7 @@ impl EventHandler<ggez::GameError> for MainState {
         {
             microprofile::scope!("MainState", "present");
             graphics::present(ctx)?;
-            self.time_manager.on_frame_submitted(1.0);
+            self.time_manager.on_frame_presented(1.0);
         }
 
         if self.update_mode == UpdateMode::Recording {
