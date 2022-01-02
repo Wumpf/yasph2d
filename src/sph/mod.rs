@@ -1,6 +1,5 @@
 pub use self::fluidparticleworld::FluidParticleWorld;
 pub use self::solver::*;
-pub use self::timemanager::*;
 pub use self::viscositymodel::*;
 
 mod appendbuffer;
@@ -10,5 +9,5 @@ pub mod neighborhood_search;
 pub mod scratch_buffer;
 pub mod smoothing_kernel;
 mod solver;
-mod timemanager;
+pub mod timemanager;
 mod viscositymodel;

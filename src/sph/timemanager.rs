@@ -7,6 +7,20 @@ use std::{
 use crate::units::*;
 
 #[derive(Clone)]
+pub struct TimerConfig {
+    pub step_config: SimulationStepConfig,
+
+    // The maximum length of a single step we're willing to do in a single frame.
+    // -> this is correlated but not equal to the minimum target framerate.
+    //
+    // If we need to compute more steps than this in a single frame, we give up and slow down the sim.
+    // (otherwise we hit the "well of despair", see https://gameworksdocs.nvidia.com/PhysX/3.3/PhysXGuide/Manual/BestPractices.html#the-well-of-despair)
+    // When to do this is surprisingly tricky since we don't know ahead of time how long the current frame will take until it is displayed on screen as it depends on various factors.
+    // For a CPU bound simulation we could measure the time the simulation takes to compute but even this only allows us a rough guess especially with adaptive simulation stepping.
+    pub max_simulated_time_per_frame: Duration,
+}
+
+#[derive(Clone)]
 pub enum AdaptiveTimeStepTarget {
     None,
 
@@ -50,12 +64,14 @@ pub enum SimulationStepConfig {
 //
 // There is three dependent clocks one needs to keep in mind
 // * wall clock time
-//      that's the watch on your wrist, independent of whatever is goingon in the application
+//      that's the watch on your wrist, independent of whatever is going on in the application
 // * render time
 //      same as on your watch if you're not recording or fast forwarding to a specific time
 // * simulation time
 //      tries to keep up with render time but potentially in different steps and may start to drop steps
 pub struct TimeManager {
+    config: TimerConfig,
+
     // wall clock time measures
     timestamp_last_frame: Instant,
     duration_last_frame: Duration,
@@ -67,7 +83,6 @@ pub struct TimeManager {
     num_frames_rendered: u32,
 
     // simulation time
-    simulation_step_config: SimulationStepConfig,
     simulation_step: Duration,
     num_simulation_steps: u32,
     num_simulation_steps_this_frame: u32,
@@ -87,13 +102,15 @@ pub enum SimulationStepResult {
 const FRAME_DURATION_HISTORY_LENGTH: usize = 50;
 
 impl TimeManager {
-    pub fn new(simulation_step_config: SimulationStepConfig) -> TimeManager {
-        let initial_step = match simulation_step_config {
+    pub fn new(config: TimerConfig) -> TimeManager {
+        let initial_step = match config.step_config {
             SimulationStepConfig::FixedTimeStep(step) => step,
             SimulationStepConfig::AdaptiveTimeStep { timestep_min, .. } => timestep_min,
         };
 
         TimeManager {
+            config,
+
             timestamp_last_frame: Instant::now(),
             duration_last_frame: Duration::ZERO,
             frame_duration_history: VecDeque::with_capacity(FRAME_DURATION_HISTORY_LENGTH),
@@ -102,7 +119,6 @@ impl TimeManager {
             current_frame_delta: Duration::ZERO,
             num_frames_rendered: 0,
 
-            simulation_step_config,
             simulation_step: initial_step,
             num_simulation_steps: 0,
             num_simulation_steps_this_frame: 0,
@@ -113,7 +129,7 @@ impl TimeManager {
     }
 
     pub fn restart(&mut self) {
-        *self = Self::new(self.simulation_step_config.clone());
+        *self = Self::new(self.config.clone());
     }
 
     // current/last simulation delta, updated in update_simulation_step
@@ -156,12 +172,12 @@ impl TimeManager {
         self.num_frames_rendered
     }
 
-    pub fn config(&self) -> &SimulationStepConfig {
-        &self.simulation_step_config
+    pub fn config(&self) -> &TimerConfig {
+        &self.config
     }
 
-    pub fn config_mut(&mut self) -> &mut SimulationStepConfig {
-        &mut self.simulation_step_config
+    pub fn config_mut(&mut self) -> &mut TimerConfig {
+        &mut self.config
     }
 
     // Forces a given frame delta (timestep on the rendering timeline)
@@ -173,7 +189,8 @@ impl TimeManager {
         self.total_rendered_time += self.current_frame_delta;
     }
 
-    pub fn on_frame_submitted(&mut self, wallclock_to_rendertime_scale: f32) {
+    // Call this when a regular frame finished presenting
+    pub fn on_frame_presented(&mut self, wallclock_to_rendertime_scale: f32) {
         self.duration_last_frame = self.timestamp_last_frame.elapsed();
         if self.frame_duration_history.len() == FRAME_DURATION_HISTORY_LENGTH {
             self.frame_duration_history.pop_front();
@@ -192,7 +209,7 @@ impl TimeManager {
         self.accepted_simulation_to_render_lag += self.current_frame_delta;
     }
 
-    pub fn simulation_frame_loop(&mut self, max_simulated_time_per_frame: Duration) -> SimulationStepResult {
+    pub fn simulation_frame_loop(&mut self) -> SimulationStepResult {
         // The rendered time we expect will be reached when this frame is shown on the screen.
         // This does not take the screen sync into account, but should.
         let predicted_rendered_time = self.total_rendered_time + self.current_frame_delta;
@@ -211,7 +228,7 @@ impl TimeManager {
         }
 
         // Did we hit a maximum of simulation steps and want to introduce lag instead?
-        if self.simulated_time_this_frame > max_simulated_time_per_frame {
+        if self.simulated_time_this_frame > self.config.max_simulated_time_per_frame {
             // We heuristically don't drop all lost simulation frames. This avoids oscillating between realtime and offline
             // which may be caused by our frame deltas being influenced by work from a couple of cpu frames ago (due gpu/cpu sync)
             // This is especially important for gpu driven simulations where don't get direct feedback on doing more or less simulation steps.
@@ -233,7 +250,7 @@ impl TimeManager {
 
     // Updates the simulation timestep length depending on the configuration
     pub(super) fn update_simulation_step(&mut self, particle_diameter: Real, max_velocity: Real) -> Duration {
-        self.simulation_step = match &self.simulation_step_config {
+        self.simulation_step = match &self.config.step_config {
             SimulationStepConfig::FixedTimeStep(timestep) => *timestep,
 
             SimulationStepConfig::AdaptiveTimeStep {
