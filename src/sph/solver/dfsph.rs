@@ -491,6 +491,8 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
         let mut _predicted_velocities = fluid_world.scratch_buffers.get_buffer_vector(fluid_world.particles.positions.len());
         let predicted_velocities = &mut _predicted_velocities.buffer;
 
+        let mut dt = time_manager.simulation_step().as_secs_f32();
+
         // compute non-pressure forces (from scratch)
         {
             let mut accellerations = fluid_world.scratch_buffers.get_buffer_vector(fluid_world.particles.positions.len());
@@ -501,7 +503,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                 let non_pressure_forces: Vector = fluid_world.gravity * fluid_world.properties.particle_mass();
                 let particle_mass = fluid_world.properties.particle_mass();
                 let non_pressure_accelleration = non_pressure_forces / particle_mass;
-                let dt = time_manager.timestep();
                 let particles = &fluid_world.particles;
                 let viscosity_model = &self.viscosity_model;
                 accellerations
@@ -536,18 +537,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
             // update timestep
             {
                 microprofile::scope!("DFSPHSolver", "update timestep");
-                let dt = time_manager.timestep();
                 let mut max_velocity_sq: Real = 0.0;
                 for (v, a) in fluid_world.particles.velocities.iter().zip(accellerations.buffer.iter()) {
                     max_velocity_sq = max_velocity_sq.max((v + a * dt).magnitude2());
                 }
-                time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt());
+                dt = time_manager
+                    .update_simulation_step(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt())
+                    .as_secs_f32()
             }
 
             // predict velocity
             {
                 microprofile::scope!("DFSPHSolver", "velocity prediction");
-                let dt = time_manager.timestep();
                 for (predicted_velocity, (v, a)) in predicted_velocities
                     .iter_mut()
                     .zip(fluid_world.particles.velocities.iter().zip(accellerations.buffer.iter()))
@@ -556,7 +557,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                 }
             }
         }
-        let dt = time_manager.timestep();
 
         // density correction loop
         self.correct_density_error(dt, fluid_world, predicted_velocities);
@@ -573,7 +573,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                 .for_each(|(position, predicted_velocity)| {
                     *position += predicted_velocity * dt;
                 });
-            time_manager.update_time();
         }
         // only attribute other than position that we need going forward is predicted velocities!
         fluid_world.update_neighborhood_datastructure(vec![predicted_velocities], Vec::new());

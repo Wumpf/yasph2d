@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 mod camera;
 
 use camera::*;
-use yasph2d::sph;
+use yasph2d::sph::{self, SimulationStepResult};
 use yasph2d::units::*;
 
 fn main() -> GameResult {
@@ -52,33 +52,22 @@ struct MainState {
     camera: Camera,
     particle_mesh_batch: graphics::MeshBatch,
 
+    // TODO: Move to timemanager?
     simulation_step_duration_history: VecDeque<Duration>,
     simulation_processing_time_frame: Duration,
-    simulationstep_count_frame: u32,
-
-    simulation_starttime: Instant,
     simulation_processing_time_total: Duration,
-    simulation_to_realtime_offset: f32, // Starts out with 0 and grows if we spend too much time on processing the simulation
-
-    frame_counter: usize,
+    simulation_is_realtime: bool,
 }
 
 const SIMULATION_STEP_HISTORY_LENGTH: usize = 80;
+const RECORDING_FPS: f64 = 60.0;
 
-// Application tries to hit this framerate. If it simulates faster, simulation sleeps. If recording this simply *is* the framerate.
-// Todo: Be awesome and make this dependent on what the screen can do.
-const TARGET_FPS: Real = 60.0;
-// Simulation time will try to stay sync with real time unless framerate drops below this. If it simulates slower, simulation time slows down.
-// Note that this measure avoid the "well of despair" (as dubbed by https://docs.nvidia.com/gameworks/content/gameworkslibrary/physx/guide/Manual/BestPractices.html)
-// where we need to do more physics step to catch up, but by doing so take even longer to catch up.
-const TARGET_FPS_MIN: Real = 10.0;
-const TARGET_MAX_PROCESSING_TIME: Real = 1.0 / TARGET_FPS_MIN;
-
-// Desired relationship between time in reality and time in simulation. In other word, "speed factor"
-// (that is, if we simulation processing time is low enough, otherwise simulation will slow down regardless)
-const REALTIME_TO_SIMTIME_SCALE: f32 = 1.0;
-
-const TARGET_FRAME_SIMDURATION: Real = REALTIME_TO_SIMTIME_SCALE / TARGET_FPS;
+// The maximum length of a single step we're willing to do in a single frame.
+// If we need to compute more steps than this in a single frame, we give up and slow down the sim.
+// -> this is correlated but not equal to the minimum target framerate.
+// TODO: This should be part of the timemanager
+// TODO: This way of dropping simulation steps won't keep a certain framerate neither for CPU nor GPU driven sim.
+const MAX_SIMULATED_TIME_PER_FRAME: f64 = 1.0 / 30.0;
 
 fn clamp(v: f32, min: f32, max: f32) -> f32 {
     if v < min {
@@ -138,9 +127,9 @@ impl MainState {
 
         let time_manager = sph::TimeManager::new(
             //sph::TimeManagerConfiguration::FixedTimeStep(TARGET_FRAME_SIMDURATION / 20.0));
-            sph::TimeManagerConfiguration::AdaptiveTimeStep {
-                timestep_max: TARGET_FRAME_SIMDURATION / 4.0,
-                timestep_min: REALTIME_TO_SIMTIME_SCALE / (400.0 * 60.0), // Don't do steps that results in more than a 400 steps for an image on a classic 60Hz display
+            sph::SimulationStepConfig::AdaptiveTimeStep {
+                timestep_max: Duration::from_secs_f32(1.0 / 120.0 / 3.0), // Ideally this is set to 1/RefreshRate
+                timestep_min: Duration::from_secs_f32(1.0 / 60.0 / 400.0), // Don't do steps that results in more than a 400 steps for an image on a classic 60Hz display
                 timestep_target_frame: sph::AdaptiveTimeStepTarget::None,
                 cfl_factor,
             },
@@ -157,13 +146,8 @@ impl MainState {
 
             simulation_step_duration_history: VecDeque::with_capacity(SIMULATION_STEP_HISTORY_LENGTH),
             simulation_processing_time_frame: Default::default(),
-            simulationstep_count_frame: 0,
-
-            simulation_starttime: Instant::now(),
             simulation_processing_time_total: Default::default(),
-            simulation_to_realtime_offset: Default::default(),
-
-            frame_counter: 0,
+            simulation_is_realtime: true,
         };
 
         state.reset_mesh_batch(ctx);
@@ -211,6 +195,7 @@ impl MainState {
         // close of the container - stop gap solution for issues with endlessly falling particles
         // (mostly a problem for adaptive timestep but potentially also for neighborhood search)
         fluid_world.add_boundary_thick_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5), 2);
+        fluid_world.add_boundary_thick_line(Point::new(-2.0, -0.5), Point::new(4.0, -0.5), 4);
     }
 
     fn draw_text(&mut self, ctx: &mut Context) -> GameResult {
@@ -221,13 +206,13 @@ impl MainState {
             self.simulation_step_duration_history.iter().sum::<Duration>() / self.simulation_step_duration_history.len().max(1) as u32;
 
         let simulation_info_text = format!(
-            "Frame Processing: {:3.2}ms ({:4} steps)\nSingle Step (averaged over {}): {:.2}ms, last timestep length {:.4}ms\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
+            "Frame Processing: {:3.2}ms ({:4} steps)\nSingle Step (averaged over {}): {:.2}ms - last sim step length {:.4}ms\n\nTotal Simulated {:.2}s\nTotal Processing {:.2}s",
             self.simulation_processing_time_frame.as_secs_f64() * 1000.0,
-            self.simulationstep_count_frame,
+            self.time_manager.num_simulation_steps_performed_for_current_frame(),
             self.simulation_step_duration_history.len(),
             average_simulation_step_duration.as_secs_f64() * 1000.0,
-            self.time_manager.timestep() * 1000.0,
-            self.time_manager.passed_time(),
+            self.time_manager.simulation_step().as_secs_f32() * 1000.0,
+            self.time_manager.total_simulated_time().as_secs_f32(),
             self.simulation_processing_time_total.as_secs_f64(),
         );
 
@@ -236,14 +221,14 @@ impl MainState {
                 "{:3.2}ms, FPS: {:3.2}\ntime since sim start {:.2}s\n\n{}",
                 1000.0 / fps,
                 fps,
-                (Instant::now() - self.simulation_starttime).as_secs_f64(),
+                self.time_manager.total_simulated_time().as_secs_f64(),
                 simulation_info_text,
             ),
 
             UpdateMode::Recording => format!("RECORDING\n{}", simulation_info_text,),
         });
         graphics::draw(ctx, &fps_display, (RenderPoint::new(10.0, 10.0), graphics::Color::WHITE))?;
-        if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME && self.update_mode == UpdateMode::RealTime {
+        if !self.simulation_is_realtime && self.update_mode == UpdateMode::RealTime {
             graphics::draw(
                 ctx,
                 &graphics::Text::new("REALTIME OFF - simulation time can not keep up with real time"),
@@ -300,7 +285,6 @@ impl MainState {
         let step_processing_time = time_after - time_before;
         self.simulation_processing_time_frame += step_processing_time;
         self.simulation_processing_time_total += step_processing_time;
-        self.simulationstep_count_frame += 1;
 
         if self.simulation_step_duration_history.len() == SIMULATION_STEP_HISTORY_LENGTH {
             self.simulation_step_duration_history.pop_front();
@@ -309,12 +293,9 @@ impl MainState {
     }
 
     fn reset_simulation(&mut self) {
-        self.sph_solver.clear_cached_data(); // todo: this is super meh
-        self.simulation_starttime = Instant::now();
-        self.simulation_to_realtime_offset = 0.0;
+        self.sph_solver.clear_cached_data();
         self.simulation_processing_time_total = Default::default();
 
-        self.frame_counter = 0;
         self.time_manager.restart();
         Self::reset_fluid(&mut self.fluid_world);
     }
@@ -348,49 +329,43 @@ impl EventHandler<ggez::GameError> for MainState {
     fn update(&mut self, _ctx: &mut Context) -> GameResult {
         microprofile::scope!("MainState", "update");
 
-        self.simulationstep_count_frame = 0;
         self.simulation_processing_time_frame = Duration::from_secs(0);
 
+        // TODO: Part of this logic should be inside timemanager?
         match self.update_mode {
             UpdateMode::RealTime => {
                 // Note that we _could_ influence the simulation timestep target every frame depending on the delta frame time.
                 // However, that would make our simulation dependent on external, non-deterministic factors and we don't want that.
-                if let sph::TimeManagerConfiguration::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
+                if let sph::SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
                     *timestep_target_frame = sph::AdaptiveTimeStepTarget::None;
                 }
 
-                let target_simulation_time =
-                    (Instant::now() - self.simulation_starttime).as_secs_f32() * REALTIME_TO_SIMTIME_SCALE - self.simulation_to_realtime_offset;
-                while self.time_manager.passed_time() < target_simulation_time {
-                    if self.time_manager.passed_time() > 4.0 {
-                        break;
-                    }
-
-                    // If we can't process fast enough, we give up and accept that there is an offset between realtime and simulation time.
-                    if self.simulation_processing_time_frame.as_secs_f32() > TARGET_MAX_PROCESSING_TIME {
-                        self.simulation_to_realtime_offset += target_simulation_time - self.time_manager.passed_time();
-                        break;
-                    }
-
-                    self.single_sim_step();
+                loop {
+                    match self
+                        .time_manager
+                        .simulation_frame_loop(Duration::from_secs_f64(MAX_SIMULATED_TIME_PER_FRAME))
+                    {
+                        SimulationStepResult::PerformStepAndCallAgain => self.single_sim_step(),
+                        SimulationStepResult::CaughtUpWithRenderTime => {
+                            self.simulation_is_realtime = true;
+                            break;
+                        }
+                        SimulationStepResult::DroppingSimulationSteps => {
+                            self.simulation_is_realtime = false;
+                            break;
+                        }
+                    };
                 }
             }
             UpdateMode::Recording => {
+                let frame_length = Duration::from_secs_f64(1.0 / RECORDING_FPS);
+                self.time_manager.force_frame_delta(frame_length);
+
                 // When doing recording, we want to hit the exact frame times.
-                let epsilon;
-                if let sph::TimeManagerConfiguration::AdaptiveTimeStep {
-                    timestep_min,
-                    timestep_target_frame,
-                    ..
-                } = self.time_manager.config_mut()
-                {
-                    *timestep_target_frame = sph::AdaptiveTimeStepTarget::TargetFrameLength(TARGET_FRAME_SIMDURATION);
-                    epsilon = *timestep_min * 0.5;
-                } else {
-                    epsilon = 1.0e-9;
+                if let sph::SimulationStepConfig::AdaptiveTimeStep { timestep_target_frame, .. } = self.time_manager.config_mut() {
+                    *timestep_target_frame = sph::AdaptiveTimeStepTarget::TargetFrameLength(frame_length);
                 }
-                let target_simulation_time = self.frame_counter as Real * TARGET_FRAME_SIMDURATION - epsilon;
-                while self.time_manager.passed_time() < target_simulation_time {
+                while self.time_manager.simulation_frame_loop(Duration::from_secs(u64::MAX)) == SimulationStepResult::PerformStepAndCallAgain {
                     self.single_sim_step();
                 }
             }
@@ -411,6 +386,7 @@ impl EventHandler<ggez::GameError> for MainState {
         {
             microprofile::scope!("MainState", "present");
             graphics::present(ctx)?;
+            self.time_manager.on_frame_submitted(1.0);
         }
 
         if self.update_mode == UpdateMode::Recording {
@@ -422,13 +398,15 @@ impl EventHandler<ggez::GameError> for MainState {
                 img = graphics::screenshot(ctx).expect("Could not take screenshot");
             }
             {
-                // todo: this png encoder/writer here is slow. have something faster.
                 microprofile::scope!("MainState", "save as png");
-                img.encode(ctx, graphics::ImageFormat::Png, format!("/recording/{}.png", self.frame_counter))
-                    .expect("Could not save screenshot");
+                img.encode(
+                    ctx,
+                    graphics::ImageFormat::Png,
+                    format!("/recording/{}.png", self.time_manager.num_frames_rendered()),
+                )
+                .expect("Could not save screenshot");
             }
         }
-        self.frame_counter += 1;
 
         Ok(())
     }

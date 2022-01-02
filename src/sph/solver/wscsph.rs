@@ -140,7 +140,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
         // leap frog integration scheme with integer steps
         // https://en.wikipedia.org/wiki/Leapfrog_integration
 
-        let mut dt = time_manager.timestep();
+        let mut dt = time_manager.simulation_step().as_secs_f32();
 
         {
             microprofile::scope!("WCSPHSolver", "leap frog 1");
@@ -171,8 +171,9 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for WCSPHSolver
             for (v, a) in fluid_world.particles.velocities.iter().zip(self.accellerations.iter()) {
                 max_velocity_sq = max_velocity_sq.max((v + a * dt).magnitude2());
             }
-            time_manager.update_timestep(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt());
-            dt = time_manager.timestep();
+            dt = time_manager
+                .update_simulation_step(fluid_world.properties.particle_radius() * 2.0, max_velocity_sq.sqrt())
+                .as_secs_f32();
         }
 
         // part 2 of leap frog integration. Finish updating velocity.
