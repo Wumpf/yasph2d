@@ -170,15 +170,9 @@ impl CellGrid {
         microprofile::scope!("NeighborhoodSearch", "CellGrid::update");
 
         {
-            // TODO: Don't do this every time but only now and then as a garbage collection step?
+            // TODO: Garbage collect blocks?
             microprofile::scope!("NeighborhoodSearch", "reset grid");
-
-            // Need to delete invalid pointer?
-            self.block_grid.fill(0); // TODO: this is heavy
-            if self.blocks.len() > 1 {
-                self.blocks.drain(1..);
-            }
-            //self.blocks.fill(Block::new());
+            self.blocks.fill(Block::new());
         }
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
@@ -237,28 +231,21 @@ impl CellGrid {
         {
             microprofile::scope!("NeighborhoodSearch", "create cells");
 
-            let mut prev_grid_index = usize::max_value();
-            let mut prev_cell_idx = u32::max_value();
-            let mut prev_block_index = u32::max_value();
             for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
-                let grid_index = Self::get_grid_idx(cidx);
+                let grid_index = Self::get_grid_idx(cidx); // TODO out of bounds?
+                let block_index = self.block_grid[grid_index];
 
-                if grid_index != prev_grid_index {
-                    prev_block_index = self.blocks.len() as u32;
-                    self.block_grid[grid_index] = prev_block_index; // TODO out of bounds?
+                if block_index == 0 {
+                    self.block_grid[grid_index] = self.blocks.len() as u32;
                     let mut new_block = Block::new();
                     new_block[cidx] = Cell::new(1, pidx as u32);
                     self.blocks.push(new_block);
-
-                    prev_grid_index = grid_index;
-                    prev_cell_idx = cidx;
                 } else {
-                    debug_assert!(prev_block_index != 0);
-                    if prev_cell_idx != cidx {
-                        self.blocks[prev_block_index as usize][cidx] = Cell::new(1, pidx as u32);
-                        prev_cell_idx = cidx;
+                    let cell = &mut self.blocks[block_index as usize][cidx];
+                    if cell.data == 0 {
+                        *cell = Cell::new(1, pidx as u32);
                     } else {
-                        self.blocks[prev_block_index as usize][cidx].add_particle();
+                        cell.add_particle();
                     }
                 }
             }
