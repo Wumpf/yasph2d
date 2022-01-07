@@ -46,6 +46,14 @@ impl Particles {
     pub(super) fn num_total_neighbors(&self, pidx: ParticleIndex) -> u32 {
         self.neighborhood.num_neighbors(pidx) + self.neighborhood.num_boundary_neighbors(pidx)
     }
+
+    pub fn num_dynamic_particles(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn num_boundary_particles(&self) -> usize {
+        self.boundary_particles.len()
+    }
 }
 
 pub struct ConstantFluidProperties {

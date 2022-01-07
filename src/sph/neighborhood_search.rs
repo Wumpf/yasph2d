@@ -7,68 +7,135 @@ use super::scratch_buffer::ScratchBufferStore;
 use crate::units::*;
 
 pub type ParticleIndex = u32;
-pub type MortonCellIndex = u32;
+pub type CellIndex = u32;
+
+const MIN_DISTANCE_SQ: Real = 1.0e-10; // used to filter for degenerated cases & self intersect
 
 #[derive(Copy, Clone)]
-struct MortonCellPos {
+struct CellPos {
     x: u16,
     y: u16,
 }
-impl MortonCellPos {
+impl CellPos {
     #[inline]
-    fn to_cidx(self) -> MortonCellIndex {
+    fn to_cellidx(self) -> CellIndex {
         super::morton::encode(self.x, self.y)
     }
 
-    #[inline]
-    fn from_cidx(cidx: MortonCellIndex) -> MortonCellPos {
-        MortonCellPos {
-            x: super::morton::decode_x(cidx) as u16,
-            y: super::morton::decode_y(cidx) as u16,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-struct MortonCell {
-    first_particle: usize,
-    cidx: MortonCellIndex,
-}
-
-// Runs of particle indices for a MortonCell and its eight neighbors.
-struct MortonCellNeighborhoodRuns {
-    // In a 3x3 2D morton box there are at max 5 continuos runs (can be less!)
-    particle_index_runs: [(usize, usize); 5],
-    num_runs: usize, // remove? not really needed I guess
+    // #[inline]
+    // fn from_cellidx(cidx: CellIndex) -> CellPos {
+    //     CellPos {
+    //         x: super::morton::decode_x(cidx) as u16,
+    //         y: super::morton::decode_y(cidx) as u16,
+    //     }
+    // }
 }
 
 struct GridProperties {
-    radius: Real,
+    cell_size: Real,
     cell_size_inv: Real,
+    num_cells_x: u16,
+    num_cells_y: u16,
     grid_min: Point,
+    //grid_max: Point,
 }
 impl GridProperties {
     #[inline]
-    fn position_to_mortoncellpos(&self, position: Point) -> MortonCellPos {
+    fn position_to_cellpos(&self, position: Point) -> CellPos {
         let cellspace = (position - self.grid_min) * self.cell_size_inv;
-        MortonCellPos {
+        CellPos {
             x: cellspace.x as u16,
             y: cellspace.y as u16,
         }
     }
 
     #[inline]
-    fn position_to_cidx(&self, position: Point) -> MortonCellIndex {
-        self.position_to_mortoncellpos(position).to_cidx()
+    fn position_to_cellidx(&self, position: Point) -> CellIndex {
+        self.position_to_cellpos(position).to_cellidx()
     }
 }
 
-#[derive(Default)]
-struct CompactMortonCellGrid {
-    cells: Vec<MortonCell>,
+const BLOCK_SIZE_BITS: usize = 2;
+const BLOCK_SIZE: usize = 1 << BLOCK_SIZE_BITS;
+
+#[derive(Copy, Clone)]
+struct Cell {
+    // 24bit for particle index, 8bit for particle count
+    data: u32,
 }
 
-impl CompactMortonCellGrid {
+impl Cell {
+    fn new(num_particles: u32, first_particle: ParticleIndex) -> Self {
+        debug_assert!(num_particles < std::u8::MAX as u32);
+        debug_assert!(first_particle < (1 << 24));
+        Cell {
+            data: num_particles + (first_particle << 8),
+        }
+    }
+
+    fn num_particles(self) -> u32 {
+        self.data & 0x0000_00ff
+    }
+
+    fn first_particle(self) -> u32 {
+        self.data >> 8
+    }
+
+    fn add_particle(&mut self) {
+        debug_assert!(self.num_particles() < 256);
+        self.data += 1;
+    }
+}
+
+#[derive(Copy, Clone)]
+struct Block {
+    cells: [Cell; BLOCK_SIZE * BLOCK_SIZE],
+}
+
+impl Block {
+    fn new() -> Self {
+        Block {
+            cells: [Cell::new(0, 0); BLOCK_SIZE * BLOCK_SIZE],
+        }
+    }
+
+    fn get_cell_idx_in_block(i: CellIndex) -> u32 {
+        i & (0xffff_ffff >> (32 - BLOCK_SIZE_BITS * 2))
+    }
+}
+
+impl std::ops::Index<CellIndex> for Block {
+    type Output = Cell;
+    fn index<'a>(&'a self, i: CellIndex) -> &'a Cell {
+        &self.cells[Block::get_cell_idx_in_block(i) as usize]
+    }
+}
+
+impl std::ops::IndexMut<CellIndex> for Block {
+    fn index_mut<'a>(&'a mut self, i: CellIndex) -> &'a mut Cell {
+        &mut self.cells[Block::get_cell_idx_in_block(i) as usize]
+    }
+}
+
+struct CellGrid {
+    // Top level grid, always filled out, covers the entire domain in low_level_cells
+    block_grid: Vec<u32>,
+    // Low level cells, added on demand. First element is always present as a sentinel.
+    blocks: Vec<Block>,
+}
+
+impl CellGrid {
+    pub fn new(grid: &GridProperties) -> Self {
+        let num_blocks_x = (grid.num_cells_x as usize + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let num_blocks_y = (grid.num_cells_y as usize + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let num_blocks = num_blocks_x * num_blocks_y;
+
+        CellGrid {
+            block_grid: vec![0; num_blocks],
+            blocks: vec![Block::new()],
+        }
+    }
+
     fn apply_sorting<T: Copy>(sorting: &[ParticleIndex], scratch_buffer: &mut Vec<T>, buffer_to_sort: &mut Vec<T>) {
         assert_eq!(scratch_buffer.len(), buffer_to_sort.len());
         assert_eq!(sorting.len(), buffer_to_sort.len());
@@ -76,6 +143,18 @@ impl CompactMortonCellGrid {
             *pos = buffer_to_sort[i as usize];
         }
         std::mem::swap(scratch_buffer, buffer_to_sort);
+    }
+
+    fn get_grid_idx(i: CellIndex) -> usize {
+        (i >> (BLOCK_SIZE_BITS * 2)) as usize
+    }
+
+    fn get_block_idx(&self, i: CellIndex) -> u32 {
+        *self.block_grid.get(Self::get_grid_idx(i)).unwrap_or(&0)
+    }
+
+    fn get_cell(&self, i: CellIndex) -> Cell {
+        unsafe { self.blocks.get_unchecked(self.get_block_idx(i) as usize)[i] }
     }
 
     // note: Applying sorting is a bit costly and only solvers know which attributes are discarded/recomputed and which need the new sorting applied.
@@ -88,7 +167,19 @@ impl CompactMortonCellGrid {
         particle_attributes_vector: &mut [&mut Vec<Vector>],
         particle_attributes_real: &mut [&mut Vec<Real>],
     ) {
-        microprofile::scope!("NeighborhoodSearch", "CompactMortonCellGrid::update");
+        microprofile::scope!("NeighborhoodSearch", "CellGrid::update");
+
+        {
+            // TODO: Don't do this every time but only now and then as a garbage collection step?
+            microprofile::scope!("NeighborhoodSearch", "reset grid");
+
+            // Need to delete invalid pointer?
+            self.block_grid.fill(0); // TODO: this is heavy
+            if self.blocks.len() > 1 {
+                self.blocks.drain(1..);
+            }
+            //self.blocks.fill(Block::new());
+        }
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
         let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
@@ -97,21 +188,28 @@ impl CompactMortonCellGrid {
         // -> use insertion sort and building permutation array into it as well!
         // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
         // ... just a bit harder to parallelize this way.
-        for (i, &pos) in positions.iter().enumerate() {
-            let cidx = grid.position_to_cidx(pos);
+        // TODO: run benchmark again and write down how it compares. also check sort_by_cached_key
+        // TODO: we're already counting elements, should we do a counting sort?
+        {
+            microprofile::scope!("NeighborhoodSearch", "sort particle indices");
 
-            particle_indices.buffer[i] = i as ParticleIndex;
-            cell_indices.buffer[i] = cidx;
+            for (i, &pos) in positions.iter().enumerate() {
+                let cidx = grid.position_to_cellidx(pos);
+                particle_indices.buffer[i] = i as ParticleIndex;
+                cell_indices.buffer[i] = cidx;
 
-            for j in (0..i).rev() {
-                if cell_indices.buffer[j] > cell_indices.buffer[j + 1] {
-                    cell_indices.buffer.swap(j, j + 1);
-                    particle_indices.buffer.swap(j, j + 1);
-                } else {
-                    break;
+                for j in (0..i).rev() {
+                    if cell_indices.buffer[j] > cell_indices.buffer[j + 1] {
+                        cell_indices.buffer.swap(j, j + 1);
+                        particle_indices.buffer.swap(j, j + 1);
+                    } else {
+                        break;
+                    }
                 }
+                // Note: Tried memcpy instead of swaps but was significantly slower in benchmarks - probably not compiler friendly?
             }
-            // Note: Tried memcpy instead of swaps but was significantly slower in benchmarks - probably not compiler friendly
+
+            // cell_indices.buffer.sort_unstable_by_key
         }
 
         // Apply sorting.
@@ -136,120 +234,33 @@ impl CompactMortonCellGrid {
         }
 
         // create cells.
-        // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
-        self.cells.clear();
-        let mut prev_cidx = MortonCellIndex::max_value();
-        for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
-            if cidx != prev_cidx {
-                self.cells.push(MortonCell { first_particle: pidx, cidx });
-                prev_cidx = cidx;
-            }
-        }
-        self.cells.push(MortonCell {
-            first_particle: positions.len(),
-            cidx: MortonCellIndex::max_value(),
-        }); // sentinel cell
-    }
+        {
+            microprofile::scope!("NeighborhoodSearch", "create cells");
 
-    // finds cell array index first cell that has an equal or bigger for a given MortonCellIndex
-    fn find_next_cell(cells: &[MortonCell], cidx: MortonCellIndex) -> usize {
-        const LINEAR_SEARCH_THRESHHOLD: usize = 16;
-        let mut min = 0;
-        let mut max = cells.len(); // exclusive
-        let mut range = max - min;
-        while range > LINEAR_SEARCH_THRESHHOLD {
-            range /= 2;
-            let mid = min + range;
-            match unsafe { cells.get_unchecked(mid) }.cidx.cmp(&cidx) {
-                std::cmp::Ordering::Greater => max = mid,
-                std::cmp::Ordering::Less => min = mid,
-                std::cmp::Ordering::Equal => return mid,
-            }
-        }
-        for pos in min..max {
-            if unsafe { cells.get_unchecked(pos) }.cidx >= cidx {
-                return pos;
-            }
-        }
-        max
-    }
+            let mut prev_grid_index = usize::max_value();
+            let mut prev_cell_idx = u32::max_value();
+            let mut prev_block_index = u32::max_value();
+            for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
+                let grid_index = Self::get_grid_idx(cidx);
 
-    fn get_particle_runs_in_neighborbox(&self, cidx: MortonCellIndex) -> MortonCellNeighborhoodRuns {
-        let pos = MortonCellPos::from_cidx(cidx);
-        let cidx_min = MortonCellPos { x: pos.x - 1, y: pos.y - 1 }.to_cidx();
-        let cidx_max = MortonCellPos { x: pos.x + 1, y: pos.y + 1 }.to_cidx();
+                if grid_index != prev_grid_index {
+                    prev_block_index = self.blocks.len() as u32;
+                    self.block_grid[grid_index] = prev_block_index; // TODO out of bounds?
+                    let mut new_block = Block::new();
+                    new_block[cidx] = Cell::new(1, pidx as u32);
+                    self.blocks.push(new_block);
 
-        let cidx_min_xbits = cidx_min & super::morton::MORTON_XBITS;
-        let cidx_min_ybits = cidx_min & super::morton::MORTON_YBITS;
-        let cidx_max_xbits = cidx_max & super::morton::MORTON_XBITS;
-        let cidx_max_ybits = cidx_max & super::morton::MORTON_YBITS;
-
-        const MAX_CONSECUTIVE_CELL_MISSES: u32 = 8;
-
-        // Note: Already tried doing this with iterators. it's hard to do and slow!
-        let mut cell_arrayidx = Self::find_next_cell(&self.cells, cidx_min);
-        let mut cell = self.cells[cell_arrayidx];
-
-        let mut runs = MortonCellNeighborhoodRuns {
-            particle_index_runs: [(0, 0); 5],
-            num_runs: 0,
-        };
-
-        while cell.cidx <= cidx_max {
-            // skip until cell is in rect
-            let mut num_misses = 0;
-            while !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
-                num_misses += 1;
-
-                // Try next. Prefer to just grind the array, but at some point use bigmin to jump ahead.
-                if num_misses > MAX_CONSECUTIVE_CELL_MISSES {
-                    let expected_next_cidx = super::morton::find_bigmin(cell.cidx, cidx_min, cidx_max);
-                    cell_arrayidx += Self::find_next_cell(&self.cells[cell_arrayidx..], expected_next_cidx);
-                    assert!(expected_next_cidx > cell.cidx);
+                    prev_grid_index = grid_index;
+                    prev_cell_idx = cidx;
                 } else {
-                    cell_arrayidx += 1;
+                    debug_assert!(prev_block_index != 0);
+                    if prev_cell_idx != cidx {
+                        self.blocks[prev_block_index as usize][cidx] = Cell::new(1, pidx as u32);
+                        prev_cell_idx = cidx;
+                    } else {
+                        self.blocks[prev_block_index as usize][cidx].add_particle();
+                    }
                 }
-                cell = self.cells[cell_arrayidx];
-
-                if cell.cidx > cidx_max {
-                    return runs;
-                }
-            }
-
-            // find particle run
-            runs.particle_index_runs[runs.num_runs].0 = cell.first_particle;
-            loop {
-                cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
-                cell = self.cells[cell_arrayidx];
-                if !super::morton::is_in_rect_presplit(cell.cidx, cidx_min_xbits, cidx_min_ybits, cidx_max_xbits, cidx_max_ybits) {
-                    break;
-                }
-            }
-            runs.particle_index_runs[runs.num_runs].1 = cell.first_particle;
-            runs.num_runs += 1;
-            if runs.num_runs == runs.particle_index_runs.len() {
-                break;
-            }
-
-            assert_ne!(cell.cidx, cidx_max); // it if was equal, then there would be a cell at cidx_max that is not in the rect limited by cidx_max
-
-            // We know current cell isn't in the rect, so skip it.
-            cell_arrayidx += 1;
-            if cell_arrayidx >= self.cells.len() {
-                break;
-            }
-            cell = self.cells[cell_arrayidx];
-        }
-
-        runs
-    }
-
-    // todo: remove, impl already no longer optimal
-    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(usize)) {
-        let runs = self.get_particle_runs_in_neighborbox(grid.position_to_cidx(position));
-        for range in runs.particle_index_runs.iter() {
-            for j in range.0..range.1 {
-                f(j);
             }
         }
     }
@@ -283,9 +294,8 @@ impl NeighborLists {
         &mut self,
         grid: &GridProperties,
         positions: &[Point],
-        cell_grid: &CompactMortonCellGrid,
         neighbor_positions: &[Point],
-        neighbor_cell_grid: &CompactMortonCellGrid,
+        neighbor_cell_grid: &CellGrid,
     ) -> Result<usize, usize> {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::try_update");
 
@@ -296,68 +306,54 @@ impl NeighborLists {
         }
         self.neighborhood_lists.clear();
         self.neighborhood_lists.resize(positions.len() * MAX_NUM_NEIGHBORS); // TODO: Smaller. Needs we need to handle error on overflow.
-        let radius_sq = grid.radius * grid.radius;
+        let radius_sq = grid.cell_size * grid.cell_size;
 
-        // Look at cell pairs in the compact cell grid since next cell tells us how many particles are in the current.
-        cell_grid.cells.par_windows(2).for_each(|cell_slice| {
-            let current_cell = cell_slice[0];
-            let next_cell = cell_slice[1];
-
+        // TODO: Would it be more efficient to walk per block?
+        positions.par_iter().enumerate().for_each(|(i, posi)| {
             let mut neighbor_set = [0; MAX_NUM_NEIGHBORS];
+            let mut num_neighbors = 0;
 
-            // set of all potential neighbors
-            let particle_runs = neighbor_cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
+            let particle_cell_pos = grid.position_to_cellpos(*posi);
 
-            // for each particle in this cell...
-            for i in current_cell.first_particle..next_cell.first_particle {
-                let posi = unsafe { *positions.get_unchecked(i) };
+            // TODO: wouldn't need to clamp the cell pos range if there was a guard band of sorts!
+            // TODO: Not optimal order
+            'neighbor_search: for x in particle_cell_pos.x.saturating_sub(1)..(particle_cell_pos.x + 2).min(grid.num_cells_x) {
+                for y in particle_cell_pos.y.saturating_sub(1)..(particle_cell_pos.y + 2).min(grid.num_cells_y) {
+                    let cidx = CellPos { x, y }.to_cellidx();
+                    let cell = neighbor_cell_grid.get_cell(cidx);
+                    let first_particle = cell.first_particle();
 
-                // gather real neighbors
-                const MIN_DISTANCE: Real = 1.0e-10; // used to filter for degenerated cases & self intersect
-                let mut num_neighbors = 0;
-                'neighbor_search: for range in particle_runs.particle_index_runs.iter() {
-                    for j in range.0..range.1 {
-                        let posj = unsafe { *neighbor_positions.get_unchecked(j) };
+                    for neighbor_idx in first_particle..(first_particle + cell.num_particles()) {
+                        let posj = unsafe { *neighbor_positions.get_unchecked(neighbor_idx as usize) };
                         let distsq = posi.distance2(posj);
-                        if distsq <= radius_sq && distsq > MIN_DISTANCE {
-                            neighbor_set[num_neighbors] = j as u32;
-                            num_neighbors += 1;
+                        if distsq <= radius_sq && distsq > MIN_DISTANCE_SQ {
                             if num_neighbors == MAX_NUM_NEIGHBORS {
                                 println!("particle has too many neighbors");
                                 break 'neighbor_search;
                             }
+                            neighbor_set[num_neighbors] = neighbor_idx;
+                            num_neighbors += 1;
                         }
                     }
                 }
+            }
 
-                // save neighbors
-                // todo: compress
-                let neighborhood_list_offset = self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]).unwrap();
-                unsafe {
-                    *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i) =
-                        (neighborhood_list_offset as u32, (neighborhood_list_offset + num_neighbors) as u32);
-                }
+            // save neighbors
+            // todo: compress?
+            let neighborhood_list_offset = self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]).unwrap();
+            unsafe {
+                *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i) =
+                    (neighborhood_list_offset as u32, (neighborhood_list_offset + num_neighbors) as u32);
             }
         });
 
         Ok(self.neighborhood_lists.len())
     }
 
-    fn update(
-        &mut self,
-        grid: &GridProperties,
-        positions: &[Point],
-        cell_grid: &CompactMortonCellGrid,
-        neighbor_positions: &[Point],
-        neighbor_cell_grid: &CompactMortonCellGrid,
-    ) {
+    fn update(&mut self, grid: &GridProperties, positions: &[Point], neighbor_positions: &[Point], neighbor_cell_grid: &CellGrid) {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
-        assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
 
-        while self
-            .try_update(grid, positions, cell_grid, neighbor_positions, neighbor_cell_grid)
-            .is_err()
-        {
+        while self.try_update(grid, positions, neighbor_positions, neighbor_cell_grid).is_err() {
             let new_capacity = self.neighborhood_lists.capacity() * 2;
             println!(
                 "Neighbor list capacity was too small. Was {}, trying again with {}",
@@ -393,8 +389,8 @@ pub struct NeighborhoodSearch {
     grid: GridProperties,
 
     // todo: Erase boundary/particle knowledge and just work with registered point sets.
-    cellgrid_particles: CompactMortonCellGrid,
-    cellgrid_boundary: CompactMortonCellGrid,
+    cellgrid_particles: CellGrid,
+    cellgrid_boundary: CellGrid,
 
     particle_particle_neighbors: NeighborLists,
     particle_boundary_neighbors: NeighborLists,
@@ -402,27 +398,33 @@ pub struct NeighborhoodSearch {
 
 impl NeighborhoodSearch {
     /// * radius:               Radius that determines if a point is a neighbor
-    /// * expected_max_density: Num particles expected per square unit
     pub fn new(radius: Real, //    , expected_max_density: Real
     ) -> NeighborhoodSearch {
         let cell_size = radius;
 
-        //const particle_INDICES.buffer_PER_CACHELINE: u32 = 64 / std::mem::size_of::<ParticleIndex>() as u32;
-        //let mut num_expected_in_cell = (cell_size * cell_size * expected_max_density + 0.5) as u32;
-        //num_expected_in_cell = (num_expected_in_cell + particle_INDICES.buffer_PER_CACHELINE-1) / particle_INDICES.buffer_PER_CACHELINE * particle_INDICES.buffer_PER_CACHELINE;
+        // todo: we can create a huge domain, but still there is a limited domain! should be safe about this and have a max
+        // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
+        let grid_min = Point::new(-200.0, -200.0);
+        let grid_max = Point::new(200.0, 200.0);
+
+        let grid = GridProperties {
+            cell_size,
+            cell_size_inv: 1.0 / cell_size,
+
+            num_cells_x: ((grid_max.x - grid_min.x) / cell_size).ceil() as u16,
+            num_cells_y: ((grid_max.y - grid_min.y) / cell_size).ceil() as u16,
+
+            grid_min,
+            // grid_max,
+        };
+
+        let cellgrid_particles = CellGrid::new(&grid);
+        let cellgrid_boundary = CellGrid::new(&grid);
 
         NeighborhoodSearch {
-            grid: GridProperties {
-                radius,
-                cell_size_inv: 1.0 / cell_size,
-                // todo: we can create a huge domain, but still there is a limited domain! should be safe about this and have a max
-                // limit is there because our morton curve wraps around at some point and then things get complicated (aka don't want to deal with this!)
-                grid_min: Point::new(-100.0, -100.0),
-            },
-
-            cellgrid_particles: Default::default(),
-            cellgrid_boundary: Default::default(),
-
+            grid,
+            cellgrid_particles,
+            cellgrid_boundary,
             particle_particle_neighbors: NeighborLists::new(),
             particle_boundary_neighbors: NeighborLists::new(),
         }
@@ -450,21 +452,11 @@ impl NeighborhoodSearch {
             particle_attributes_vector,
             particle_attributes_real,
         );
-        self.particle_particle_neighbors.update(
-            &self.grid,
-            particle_positions,
-            &self.cellgrid_particles,
-            particle_positions,
-            &self.cellgrid_particles,
-        );
+        self.particle_particle_neighbors
+            .update(&self.grid, particle_positions, particle_positions, &self.cellgrid_particles);
         if !boundary_positions.is_empty() {
-            self.particle_boundary_neighbors.update(
-                &self.grid,
-                particle_positions,
-                &self.cellgrid_particles,
-                boundary_positions,
-                &self.cellgrid_boundary,
-            );
+            self.particle_boundary_neighbors
+                .update(&self.grid, particle_positions, boundary_positions, &self.cellgrid_boundary);
         }
     }
 
@@ -487,14 +479,6 @@ impl NeighborhoodSearch {
     pub fn num_boundary_neighbors(&self, particle: ParticleIndex) -> u32 {
         self.particle_boundary_neighbors.num_neighbors(particle)
     }
-
-    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize)) {
-        self.cellgrid_particles.foreach_potential_neighbor(&self.grid, position, f)
-    }
-
-    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(usize)) {
-        self.cellgrid_boundary.foreach_potential_neighbor(&self.grid, position, f)
-    }
 }
 
 #[cfg(test)]
@@ -503,36 +487,8 @@ mod tests {
     use rand::prelude::*;
 
     #[test]
-    fn potential_neighbors_contains_neighbors() {
-        const NUM_POSITIONS: usize = 1000;
-        const DENSITY: Real = 10.0;
-        const SEARCH_RADIUS: Real = 1.0;
-
-        let mut rng: rand::rngs::SmallRng = rand::SeedableRng::seed_from_u64(123456789);
-        let mut positions: Vec<Point> = std::iter::repeat_with(|| Point::from_vec(rng.gen::<Vector>() * (NUM_POSITIONS as Real / DENSITY).sqrt()))
-            .take(NUM_POSITIONS)
-            .collect();
-
-        let mut scratch_buffer_store = ScratchBufferStore::new();
-        let mut searcher = NeighborhoodSearch::new(SEARCH_RADIUS);
-        searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
-
-        for &search_pos in positions.iter() {
-            let mut potential_neighbors = Vec::new();
-            searcher.foreach_potential_neighbor(search_pos, |p| potential_neighbors.push(p));
-
-            // validate
-            for (i, &p) in positions.iter().enumerate() {
-                if p.distance2(search_pos) <= SEARCH_RADIUS * SEARCH_RADIUS {
-                    assert!(potential_neighbors.contains(&i));
-                }
-            }
-        }
-    }
-
-    #[test]
     fn neighbors_contains_neighbors() {
-        const NUM_POSITIONS: usize = 1000;
+        const NUM_POSITIONS: usize = 5000;
         const DENSITY: Real = 10.0;
         const SEARCH_RADIUS: Real = 1.0;
 
@@ -543,7 +499,7 @@ mod tests {
 
         let mut scratch_buffer_store = ScratchBufferStore::new();
         let mut searcher = NeighborhoodSearch::new(SEARCH_RADIUS);
-        searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
+        searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &mut []);
 
         for (particle, &search_pos) in positions.iter().enumerate() {
             let mut neighbors = Vec::new();
@@ -556,6 +512,8 @@ mod tests {
                     neighbors_bruteforce.push(i as ParticleIndex);
                 }
             }
+            neighbors.sort();
+            neighbors_bruteforce.sort();
             assert_eq!(neighbors, neighbors_bruteforce);
         }
     }

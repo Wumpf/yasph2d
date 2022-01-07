@@ -189,6 +189,9 @@ impl MainState {
         // (mostly a problem for adaptive timestep but potentially also for neighborhood search)
         fluid_world.add_boundary_thick_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5), 2);
         fluid_world.add_boundary_thick_line(Point::new(-2.0, -0.5), Point::new(4.0, -0.5), 4);
+
+        println!("# Dynamic Particles:  {}", fluid_world.particles.num_dynamic_particles());
+        println!("# Boundary Particles: {}", fluid_world.particles.num_boundary_particles());
     }
 
     fn draw_text(&mut self, ctx: &mut Context) -> GameResult {

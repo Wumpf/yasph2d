@@ -30,23 +30,6 @@ fn bench_neighborhood_search(c: &mut Criterion) {
 
     c.bench_function(
         &format!(
-            "neighborhood_search.foreach_potential_neighbor, {} positions, {} density, {} search_radius",
-            NUM_POSITIONS, DENSITY, search_radius
-        ),
-        |b| {
-            let mut pindex = 0; // cycle through position for a more balanced result
-            b.iter(|| {
-                let mut accum: Vector = Zero::zero();
-                searcher.foreach_potential_neighbor(positions[pindex], |i| {
-                    accum += positions[i as usize].to_vec();
-                });
-                pindex = (pindex + 1) % NUM_POSITIONS;
-                accum
-            })
-        },
-    );
-    c.bench_function(
-        &format!(
             "neighborhood_search.foreach_neighbor, {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
