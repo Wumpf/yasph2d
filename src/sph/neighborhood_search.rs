@@ -176,34 +176,19 @@ impl CellGrid {
         }
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
-        let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
 
-        // we know that most particles have not changed since last frame
-        // -> use insertion sort and building permutation array into it as well!
-        // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
-        // ... just a bit harder to parallelize this way.
-        // TODO: run benchmark again and write down how it compares. also check sort_by_cached_key
-        // TODO: we're already counting elements, should we do a counting sort?
+        // Testruns, averaged over all steps of 30 frames in a test scene
+        // Manual insertion sort, using a separate cell_indices buffer: avg 0.190ms, max 0.416ms
+        // sort_unstable_by_key:                                        avg 0.667ms, max 0.889ms
+        // sort_by_cached_key:                                          avg 0.171ms, max 0.405ms
         {
             microprofile::scope!("NeighborhoodSearch", "sort particle indices");
-
-            for (i, &pos) in positions.iter().enumerate() {
-                let cidx = grid.position_to_cellidx(pos);
-                particle_indices.buffer[i] = i as ParticleIndex;
-                cell_indices.buffer[i] = cidx;
-
-                for j in (0..i).rev() {
-                    if cell_indices.buffer[j] > cell_indices.buffer[j + 1] {
-                        cell_indices.buffer.swap(j, j + 1);
-                        particle_indices.buffer.swap(j, j + 1);
-                    } else {
-                        break;
-                    }
-                }
-                // Note: Tried memcpy instead of swaps but was significantly slower in benchmarks - probably not compiler friendly?
+            for (i, idx) in particle_indices.buffer.iter_mut().enumerate() {
+                *idx = i as u32;
             }
-
-            // cell_indices.buffer.sort_unstable_by_key
+            particle_indices
+                .buffer
+                .sort_by_cached_key(|i| grid.position_to_cellidx(*unsafe { positions.get_unchecked(*i as usize) }));
         }
 
         // Apply sorting.
@@ -227,11 +212,12 @@ impl CellGrid {
             }
         }
 
-        // create cells.
+        // create/update cells.
         {
             microprofile::scope!("NeighborhoodSearch", "create cells");
 
-            for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
+            for (pidx, &pos) in positions.iter().enumerate() {
+                let cidx = grid.position_to_cellidx(pos);
                 let grid_index = Self::get_grid_idx(cidx); // TODO out of bounds?
                 let block_index = self.block_grid[grid_index];
 
@@ -499,6 +485,8 @@ mod tests {
                     neighbors_bruteforce.push(i as ParticleIndex);
                 }
             }
+
+            // TODO: algo used to be order preserving. let's get back to that?
             neighbors.sort();
             neighbors_bruteforce.sort();
             assert_eq!(neighbors, neighbors_bruteforce);
