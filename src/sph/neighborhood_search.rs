@@ -91,27 +91,19 @@ impl CompactMortonCellGrid {
         microprofile::scope!("NeighborhoodSearch", "CompactMortonCellGrid::update");
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
-        let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
 
-        // we know that most particles have not changed since last frame
-        // -> use insertion sort and building permutation array into it as well!
-        // (benchmarking confirmed that this is a lot faster than particles.sort_unstable_by_key)
-        // ... just a bit harder to parallelize this way.
-        for (i, &pos) in positions.iter().enumerate() {
-            let cidx = grid.position_to_cidx(pos);
-
-            particle_indices.buffer[i] = i as ParticleIndex;
-            cell_indices.buffer[i] = cidx;
-
-            for j in (0..i).rev() {
-                if cell_indices.buffer[j] > cell_indices.buffer[j + 1] {
-                    cell_indices.buffer.swap(j, j + 1);
-                    particle_indices.buffer.swap(j, j + 1);
-                } else {
-                    break;
-                }
+        // Testruns, averaged over all steps of 30 frames in a test scene
+        // Manual insertion sort, using a separate cell_indices buffer: avg 0.190ms, max 0.416ms
+        // sort_unstable_by_key:                                        avg 0.667ms, max 0.889ms
+        // sort_by_cached_key:                                          avg 0.171ms, max 0.405ms
+        {
+            microprofile::scope!("NeighborhoodSearch", "sort particle indices");
+            for (i, idx) in particle_indices.buffer.iter_mut().enumerate() {
+                *idx = i as u32;
             }
-            // Note: Tried memcpy instead of swaps but was significantly slower in benchmarks - probably not compiler friendly
+            particle_indices
+                .buffer
+                .sort_by_cached_key(|i| grid.position_to_cidx(*unsafe { positions.get_unchecked(*i as usize) }));
         }
 
         // Apply sorting.
@@ -137,18 +129,22 @@ impl CompactMortonCellGrid {
 
         // create cells.
         // we could do this during the sort and use the prefix sums for some clever jumping. Tried it and wasn't great (both perf & impl niceness)
-        self.cells.clear();
-        let mut prev_cidx = MortonCellIndex::max_value();
-        for (pidx, &cidx) in cell_indices.buffer.iter().enumerate() {
-            if cidx != prev_cidx {
-                self.cells.push(MortonCell { first_particle: pidx, cidx });
-                prev_cidx = cidx;
+        {
+            microprofile::scope!("NeighborhoodSearch", "create morton cells");
+            self.cells.clear();
+            let mut prev_cidx = MortonCellIndex::max_value();
+            for (pidx, &position) in positions.iter().enumerate() {
+                let cidx = grid.position_to_cidx(position);
+                if cidx != prev_cidx {
+                    self.cells.push(MortonCell { first_particle: pidx, cidx });
+                    prev_cidx = cidx;
+                }
             }
+            self.cells.push(MortonCell {
+                first_particle: positions.len(),
+                cidx: MortonCellIndex::max_value(),
+            }); // sentinel cell
         }
-        self.cells.push(MortonCell {
-            first_particle: positions.len(),
-            cidx: MortonCellIndex::max_value(),
-        }); // sentinel cell
     }
 
     // finds cell array index first cell that has an equal or bigger for a given MortonCellIndex
