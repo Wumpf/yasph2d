@@ -16,7 +16,7 @@ fn main() -> GameResult {
         .window_setup(
             conf::WindowSetup::default()
                 .title("YaSPH2D")
-                //.samples(conf::NumSamples::Eight) // https://github.com/ggez/ggez/issues/751
+                .samples(conf::NumSamples::Eight) // https://github.com/ggez/ggez/issues/751
                 .vsync(false),
         )
         .window_mode(conf::WindowMode::default().dimensions(1920.0, 1080.0));
@@ -345,6 +345,11 @@ impl EventHandler<ggez::GameError> for MainState {
         }
 
         loop {
+            // HACK
+            if self.time_manager.total_simulated_time().as_secs_f32() > 4.0 {
+                break;
+            }
+
             match self.time_manager.simulation_frame_loop() {
                 SimulationStepResult::PerformStepAndCallAgain => self.single_sim_step(),
                 SimulationStepResult::CaughtUpWithRenderTime => {

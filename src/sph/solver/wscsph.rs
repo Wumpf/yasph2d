@@ -66,11 +66,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
 
         let fluid_density = fluid_world.properties.fluid_density();
         let particles = &fluid_world.particles;
-        let pressure_kernel = self.pressure_kernel;
-        let boundary_force_factor = self.boundary_force_factor;
-        let viscosity_model = &self.viscosity_model;
         let gravity = fluid_world.gravity;
-        let stiffness = self.stiffness;
 
         self.accellerations
             .par_iter_mut()
@@ -86,7 +82,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
             .for_each(|(i, (accelleration, (&vi, &ri, &rhoi)))| {
                 *accelleration = gravity;
 
-                let pi = Self::pressure(stiffness, fluid_density, rhoi);
+                let pi = Self::pressure(self.stiffness, fluid_density, rhoi);
                 let i = i as u32;
 
                 // no self-contribution since vector to particle is zero (-> no pressure) and velocity difference is zero as well (-> no viscosity)
@@ -96,7 +92,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                     |j| {
                         let j = j as usize;
                         let rhoj = particles.densities[j];
-                        let pj = Self::pressure(stiffness, fluid_density, rhoj);
+                        let pj = Self::pressure(self.stiffness, fluid_density, rhoj);
                         let ri_to_rj = particles.positions[j] - ri;
                         let r_sq = ri_to_rj.magnitude2();
                         let r = r_sq.sqrt();
@@ -105,9 +101,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                         // As in "Particle-Based Fluid Simulation for Interactive Applications", Müller et al.
                         // This is a weakly compressible model (WCSPH)
                         let pressure_unsmoothed = -mass * (pi + pj) / (2.0 * rhoi * rhoj);
-                        *accelleration += pressure_unsmoothed * pressure_kernel.gradient(ri_to_rj, r_sq, r);
+                        *accelleration += pressure_unsmoothed * self.pressure_kernel.gradient(ri_to_rj, r_sq, r);
 
-                        *accelleration += viscosity_model.compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, particles.velocities[j] - vi);
+                        *accelleration += self
+                            .viscosity_model
+                            .compute_viscous_accelleration(dt, r_sq, r, mass, rhoj, particles.velocities[j] - vi);
                     },
                 );
 
@@ -121,7 +119,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> WCSPHSolver<TViscosity
                     |j| {
                         let ri_to_rj = particles.boundary_particles[j as usize] - ri;
                         let r_sq = ri_to_rj.magnitude2();
-                        *accelleration -= boundary_force_factor * pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
+                        *accelleration -= self.boundary_force_factor * self.pressure_kernel.evaluate(r_sq, r_sq.sqrt()) / r_sq * ri_to_rj;
                     },
                 );
             });

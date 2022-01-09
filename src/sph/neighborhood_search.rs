@@ -268,12 +268,9 @@ impl NeighborLists {
         self.neighborhood_lists.resize(positions.len() * MAX_NUM_NEIGHBORS as usize); // TODO: Smaller. Needs we need to handle error on overflow.
         let radius_sq = grid.cell_size * grid.cell_size;
 
-        let neighborhood_list_ranges = &mut self.neighborhood_list_ranges;
-        let neighborhood_lists = &mut self.neighborhood_lists;
-
         positions
             .par_iter()
-            .zip(neighborhood_list_ranges.par_iter_mut())
+            .zip(self.neighborhood_list_ranges.par_iter_mut())
             .for_each(|(posi, neighborhood_range)| {
                 let mut neighbor_set = [0; MAX_NUM_NEIGHBORS as usize];
                 let mut num_neighbors = 0;
@@ -305,7 +302,10 @@ impl NeighborLists {
 
                 // save neighbors
                 // todo: compress?
-                let offset = neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors as usize]).unwrap() as u32;
+                let offset = self
+                    .neighborhood_lists
+                    .extend_from_slice(&neighbor_set[..num_neighbors as usize])
+                    .unwrap() as u32;
                 *neighborhood_range = offset..(offset + num_neighbors);
             });
 
