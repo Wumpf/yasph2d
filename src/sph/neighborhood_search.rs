@@ -1,6 +1,7 @@
 use cgmath::prelude::*;
 use rayon::prelude::*;
 use std::cell::UnsafeCell;
+use std::ops::Range;
 
 use super::appendbuffer::AppendBuffer;
 use super::scratch_buffer::ScratchBufferStore;
@@ -31,15 +32,15 @@ impl MortonCellPos {
 
 #[derive(Copy, Clone)]
 struct MortonCell {
-    first_particle: usize,
+    first_particle: ParticleIndex,
     cidx: MortonCellIndex,
 }
 
 // Runs of particle indices for a MortonCell and its eight neighbors.
 struct MortonCellNeighborhoodRuns {
     // In a 3x3 2D morton box there are at max 5 continuos runs (can be less!)
-    particle_index_runs: [(usize, usize); 5],
-    num_runs: usize, // remove? not really needed I guess
+    particle_index_runs: [(u32, u32); 5],
+    num_runs: u32, // remove? not really needed I guess
 }
 
 struct GridProperties {
@@ -136,12 +137,15 @@ impl CompactMortonCellGrid {
             for (pidx, &position) in positions.iter().enumerate() {
                 let cidx = grid.position_to_cidx(position);
                 if cidx != prev_cidx {
-                    self.cells.push(MortonCell { first_particle: pidx, cidx });
+                    self.cells.push(MortonCell {
+                        first_particle: pidx as ParticleIndex,
+                        cidx,
+                    });
                     prev_cidx = cidx;
                 }
             }
             self.cells.push(MortonCell {
-                first_particle: positions.len(),
+                first_particle: positions.len() as ParticleIndex,
                 cidx: MortonCellIndex::max_value(),
             }); // sentinel cell
         }
@@ -213,7 +217,7 @@ impl CompactMortonCellGrid {
             }
 
             // find particle run
-            runs.particle_index_runs[runs.num_runs].0 = cell.first_particle;
+            runs.particle_index_runs[runs.num_runs as usize].0 = cell.first_particle;
             loop {
                 cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
                 cell = self.cells[cell_arrayidx];
@@ -221,9 +225,9 @@ impl CompactMortonCellGrid {
                     break;
                 }
             }
-            runs.particle_index_runs[runs.num_runs].1 = cell.first_particle;
+            runs.particle_index_runs[runs.num_runs as usize].1 = cell.first_particle;
             runs.num_runs += 1;
-            if runs.num_runs == runs.particle_index_runs.len() {
+            if runs.num_runs == runs.particle_index_runs.len() as u32 {
                 break;
             }
 
@@ -241,7 +245,7 @@ impl CompactMortonCellGrid {
     }
 
     // todo: remove, impl already no longer optimal
-    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(usize)) {
+    pub fn foreach_potential_neighbor(&self, grid: &GridProperties, position: Point, mut f: impl FnMut(u32)) {
         let runs = self.get_particle_runs_in_neighborbox(grid.position_to_cidx(position));
         for range in runs.particle_index_runs.iter() {
             for j in range.0..range.1 {
@@ -251,11 +255,10 @@ impl CompactMortonCellGrid {
     }
 }
 
-// todo: Is there a way around this construct from hell?
 // We *know* every thread/task is writing a disjunct set of elements in this array.
-// But since size of these sets variies, it's really hard to convince the compiler of our guarantee.
+// But since size of these sets variies and we're accessing it effectively at random, it's really hard to convince the compiler of our guarantee.
 struct NeighborListRanges {
-    list: UnsafeCell<Vec<(u32, u32)>>,
+    list: UnsafeCell<Vec<Range<ParticleIndex>>>,
 }
 unsafe impl Sync for NeighborListRanges {}
 unsafe impl Send for NeighborListRanges {}
@@ -285,38 +288,37 @@ impl NeighborLists {
     ) -> Result<usize, usize> {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::try_update");
 
-        const MAX_NUM_NEIGHBORS: usize = 64; // todo: At least pretend to be scientific about this value.
+        const MAX_NUM_NEIGHBORS: u32 = 64; // todo: At least pretend to be scientific about this value.
 
-        unsafe {
-            (*self.neighborhood_list_ranges.list.get()).resize(positions.len() + 1, (0, 0));
-        }
+        self.neighborhood_list_ranges.list.get_mut().resize(positions.len(), 0..0);
         self.neighborhood_lists.clear();
-        self.neighborhood_lists.resize(positions.len() * MAX_NUM_NEIGHBORS); // TODO: Smaller. Needs we need to handle error on overflow.
+        self.neighborhood_lists.resize(positions.len() * MAX_NUM_NEIGHBORS as usize); // TODO: Smaller. Needs we need to handle error on overflow.
         let radius_sq = grid.radius * grid.radius;
 
         // Look at cell pairs in the compact cell grid since next cell tells us how many particles are in the current.
+        // Going by cells instead of particles allows us to query neighbor cells / runs of neighbor particles only once
         cell_grid.cells.par_windows(2).for_each(|cell_slice| {
             let current_cell = cell_slice[0];
             let next_cell = cell_slice[1];
 
-            let mut neighbor_set = [0; MAX_NUM_NEIGHBORS];
+            let mut neighbor_set = [0; MAX_NUM_NEIGHBORS as usize];
 
             // set of all potential neighbors
             let particle_runs = neighbor_cell_grid.get_particle_runs_in_neighborbox(current_cell.cidx);
 
             // for each particle in this cell...
             for i in current_cell.first_particle..next_cell.first_particle {
-                let posi = unsafe { *positions.get_unchecked(i) };
+                let posi = unsafe { *positions.get_unchecked(i as usize) };
 
                 // gather real neighbors
                 const MIN_DISTANCE: Real = 1.0e-10; // used to filter for degenerated cases & self intersect
                 let mut num_neighbors = 0;
                 'neighbor_search: for range in particle_runs.particle_index_runs.iter() {
                     for j in range.0..range.1 {
-                        let posj = unsafe { *neighbor_positions.get_unchecked(j) };
+                        let posj = unsafe { *neighbor_positions.get_unchecked(j as usize) };
                         let distsq = posi.distance2(posj);
                         if distsq <= radius_sq && distsq > MIN_DISTANCE {
-                            neighbor_set[num_neighbors] = j as u32;
+                            neighbor_set[num_neighbors as usize] = j;
                             num_neighbors += 1;
                             if num_neighbors == MAX_NUM_NEIGHBORS {
                                 println!("particle has too many neighbors");
@@ -328,10 +330,13 @@ impl NeighborLists {
 
                 // save neighbors
                 // todo: compress
-                let neighborhood_list_offset = self.neighborhood_lists.extend_from_slice(&neighbor_set[..num_neighbors]).unwrap();
+                let neighborhood_list_offset = self
+                    .neighborhood_lists
+                    .extend_from_slice(&neighbor_set[..num_neighbors as usize])
+                    .unwrap() as u32;
                 unsafe {
-                    *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i) =
-                        (neighborhood_list_offset as u32, (neighborhood_list_offset + num_neighbors) as u32);
+                    *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i as usize) =
+                        neighborhood_list_offset..(neighborhood_list_offset + num_neighbors);
                 }
             }
         });
@@ -348,7 +353,7 @@ impl NeighborLists {
         neighbor_cell_grid: &CompactMortonCellGrid,
     ) {
         microprofile::scope!("NeighborhoodSearch", "NeighborLists::update");
-        assert_eq!(cell_grid.cells.last().unwrap().first_particle, positions.len());
+        assert_eq!(cell_grid.cells.last().unwrap().first_particle as usize, positions.len());
 
         while self
             .try_update(grid, positions, cell_grid, neighbor_positions, neighbor_cell_grid)
@@ -366,22 +371,16 @@ impl NeighborLists {
 
     #[inline]
     pub fn foreach_neighbor(&self, particle: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
-        unsafe {
-            let ranges = &*self.neighborhood_list_ranges.list.get();
-            let range = *ranges.get_unchecked(particle as usize);
-            let neighborhood_lists = self.neighborhood_lists.as_slice();
-            for i in range.0..range.1 {
-                f(*neighborhood_lists.get_unchecked(i as usize));
-            }
+        let range = unsafe { (*self.neighborhood_list_ranges.list.get()).get_unchecked(particle as usize) };
+        let neighborhood_lists = self.neighborhood_lists.as_slice();
+        for i in range.clone() {
+            f(*unsafe { neighborhood_lists.get_unchecked(i as usize) });
         }
     }
 
     pub fn num_neighbors(&self, particle: ParticleIndex) -> u32 {
-        unsafe {
-            let ranges = &*self.neighborhood_list_ranges.list.get();
-            let range = *ranges.get_unchecked(particle as usize);
-            range.1 - range.0
-        }
+        let range = unsafe { (*self.neighborhood_list_ranges.list.get()).get_unchecked(particle as usize) };
+        range.end - range.start
     }
 }
 
@@ -484,11 +483,11 @@ impl NeighborhoodSearch {
         self.particle_boundary_neighbors.num_neighbors(particle)
     }
 
-    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(usize)) {
+    pub fn foreach_potential_neighbor(&self, position: Point, f: impl FnMut(u32)) {
         self.cellgrid_particles.foreach_potential_neighbor(&self.grid, position, f)
     }
 
-    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(usize)) {
+    pub fn foreach_potential_boundary_neighbor(&self, position: Point, f: impl FnMut(u32)) {
         self.cellgrid_boundary.foreach_potential_neighbor(&self.grid, position, f)
     }
 }
@@ -520,7 +519,7 @@ mod tests {
             // validate
             for (i, &p) in positions.iter().enumerate() {
                 if p.distance2(search_pos) <= SEARCH_RADIUS * SEARCH_RADIUS {
-                    assert!(potential_neighbors.contains(&i));
+                    assert!(potential_neighbors.contains(&(i as u32)));
                 }
             }
         }
