@@ -39,8 +39,7 @@ struct MortonCell {
 // Runs of particle indices for a MortonCell and its eight neighbors.
 struct MortonCellNeighborhoodRuns {
     // In a 3x3 2D morton box there are at max 5 continuos runs (can be less!)
-    particle_index_runs: [(u32, u32); 5],
-    num_runs: u32, // remove? not really needed I guess
+    particle_index_runs: [(ParticleIndex, ParticleIndex); 5],
 }
 
 struct GridProperties {
@@ -192,8 +191,8 @@ impl CompactMortonCellGrid {
 
         let mut runs = MortonCellNeighborhoodRuns {
             particle_index_runs: [(0, 0); 5],
-            num_runs: 0,
         };
+        let mut run_idx = 0;
 
         while cell.cidx <= cidx_max {
             // skip until cell is in rect
@@ -217,7 +216,7 @@ impl CompactMortonCellGrid {
             }
 
             // find particle run
-            runs.particle_index_runs[runs.num_runs as usize].0 = cell.first_particle;
+            runs.particle_index_runs[run_idx].0 = cell.first_particle;
             loop {
                 cell_arrayidx += 1; // we won't be here for long, no point in doing profound skipping.
                 cell = self.cells[cell_arrayidx];
@@ -225,9 +224,9 @@ impl CompactMortonCellGrid {
                     break;
                 }
             }
-            runs.particle_index_runs[runs.num_runs as usize].1 = cell.first_particle;
-            runs.num_runs += 1;
-            if runs.num_runs == runs.particle_index_runs.len() as u32 {
+            runs.particle_index_runs[run_idx].1 = cell.first_particle;
+            run_idx += 1;
+            if run_idx == runs.particle_index_runs.len() {
                 break;
             }
 
@@ -313,7 +312,7 @@ impl NeighborLists {
                 // gather real neighbors
                 const MIN_DISTANCE: Real = 1.0e-10; // used to filter for degenerated cases & self intersect
                 let mut num_neighbors = 0;
-                'neighbor_search: for range in particle_runs.particle_index_runs.iter() {
+                'neighbor_search: for range in particle_runs.particle_index_runs {
                     for j in range.0..range.1 {
                         let posj = unsafe { *neighbor_positions.get_unchecked(j as usize) };
                         let distsq = posi.distance2(posj);
