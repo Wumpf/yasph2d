@@ -10,7 +10,7 @@ use crate::units::*;
 pub type ParticleIndex = u32;
 pub type MortonCellIndex = u32;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 struct MortonCellPos {
     x: u16,
     y: u16,
@@ -91,19 +91,24 @@ impl CompactMortonCellGrid {
         microprofile::scope!("NeighborhoodSearch", "CompactMortonCellGrid::update");
 
         let particle_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
+        let cell_indices = &mut scratch_buffers.get_buffer_uint(positions.len());
 
         // Testruns, averaged over all steps of 30 frames in a test scene
         // Manual insertion sort, using a separate cell_indices buffer: avg 0.190ms, max 0.416ms
         // sort_unstable_by_key:                                        avg 0.667ms, max 0.889ms
         // sort_by_cached_key:                                          avg 0.171ms, max 0.405ms
+        // sort_unstable_by_key, precomputed key:                       avg 0.159ms, max 0.336ms
+        // par_sort_unstable_by_key, precomputed key:                   avg 0.128ms, max 0.242ms
         {
             microprofile::scope!("NeighborhoodSearch", "sort particle indices");
-            for (i, idx) in particle_indices.buffer.iter_mut().enumerate() {
+            for (i, (idx, cidx)) in particle_indices.buffer.iter_mut().zip(cell_indices.buffer.iter_mut()).enumerate() {
                 *idx = i as u32;
+                *cidx = grid.position_to_cidx(*unsafe { positions.get_unchecked(i) });
             }
+            let b = &cell_indices.buffer;
             particle_indices
                 .buffer
-                .sort_by_cached_key(|i| grid.position_to_cidx(*unsafe { positions.get_unchecked(*i as usize) }));
+                .par_sort_unstable_by_key(|i| *unsafe { b.get_unchecked(*i as usize) });
         }
 
         // Apply sorting.
@@ -132,15 +137,18 @@ impl CompactMortonCellGrid {
         {
             microprofile::scope!("NeighborhoodSearch", "create morton cells");
             self.cells.clear();
-            let mut prev_cidx = MortonCellIndex::max_value();
+            let mut prev_morton_pos = MortonCellPos {
+                x: u16::max_value(),
+                y: u16::max_value(),
+            };
             for (pidx, &position) in positions.iter().enumerate() {
-                let cidx = grid.position_to_cidx(position);
-                if cidx != prev_cidx {
+                let morton_pos = grid.position_to_mortoncellpos(position);
+                if morton_pos != prev_morton_pos {
                     self.cells.push(MortonCell {
                         first_particle: pidx as ParticleIndex,
-                        cidx,
+                        cidx: morton_pos.to_cidx(),
                     });
-                    prev_cidx = cidx;
+                    prev_morton_pos = morton_pos;
                 }
             }
             self.cells.push(MortonCell {
