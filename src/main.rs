@@ -114,7 +114,7 @@ impl MainState {
 
         let cfl_factor = match solver {
             Solver::WSCSPH => 0.2,
-            Solver::DFSPH => 1.0,
+            Solver::DFSPH => 1.5,
         };
 
         let time_manager = TimeManager::new(TimerConfig {
@@ -179,16 +179,20 @@ impl MainState {
         fluid_world.remove_all_boundary_particles();
 
         fluid_world.add_fluid_rect(&Rect::new(0.1, 0.7, 0.5, 1.0), 0.05);
-        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(2.0, 0.0), 2);
-        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(0.0, 2.5), 2);
-        fluid_world.add_boundary_thick_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5), 2);
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5), 4);
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(2.0, 0.0), 4);
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.0), Point::new(0.0, 2.5), 4);
+        fluid_world.add_boundary_thick_line(Point::new(2.0, 0.0), Point::new(2.0, 2.5), 4);
 
-        fluid_world.add_boundary_line(Point::new(0.0, 0.6), Point::new(1.75, 0.5));
+        fluid_world.add_boundary_thick_line(Point::new(0.0, 0.6), Point::new(1.75, 0.5), 2);
 
         // close of the container - stop gap solution for issues with endlessly falling particles
         // (mostly a problem for adaptive timestep but potentially also for neighborhood search)
         fluid_world.add_boundary_thick_line(Point::new(0.0, 2.5), Point::new(2.0, 2.5), 2);
         fluid_world.add_boundary_thick_line(Point::new(-2.0, -0.5), Point::new(4.0, -0.5), 4);
+
+        println!("# Dynamic Particles:  {}", fluid_world.particles.num_dynamic_particles());
+        println!("# Boundary Particles: {}", fluid_world.particles.num_boundary_particles());
     }
 
     fn draw_text(&mut self, ctx: &mut Context) -> GameResult {
