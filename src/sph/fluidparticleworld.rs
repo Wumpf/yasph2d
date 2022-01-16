@@ -28,8 +28,11 @@ impl Particles {
         Self::foreach_neighbor_particle_internal(&self.neighborhood, pidx, f)
     }
     #[inline]
-    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
-        neighborhood.foreach_neighbor(pidx, f);
+    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
+        // TODO: Expose the new slice
+        for &i in neighborhood.neighbor_lists().neighbors_dynamic(pidx) {
+            f(i);
+        }
     }
 
     #[inline(always)]
@@ -37,14 +40,17 @@ impl Particles {
         Self::foreach_neighbor_particle_internal_boundary_new(&self.neighborhood, pidx, f)
     }
     #[inline]
-    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
-        neighborhood.foreach_boundary_neighbor(pidx, f);
+    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
+        // TODO: Expose the new slice
+        for &i in neighborhood.neighbor_lists().neighbors_static(pidx) {
+            f(i);
+        }
     }
 
     // Can be useful to determine particle deficiency. Not used right now.
     #[inline]
-    pub(super) fn num_total_neighbors(&self, pidx: ParticleIndex) -> u32 {
-        self.neighborhood.num_neighbors(pidx) + self.neighborhood.num_boundary_neighbors(pidx)
+    pub(super) fn num_total_neighbors(&self, pidx: ParticleIndex) -> u16 {
+        self.neighborhood.neighbor_lists().num_neighbors(pidx)
     }
 }
 
@@ -260,11 +266,11 @@ impl FluidParticleWorld {
         if self.boundary_changed {
             self.particles
                 .neighborhood
-                .update_boundary(&mut self.scratch_buffers, &mut self.particles.boundary_particles);
+                .update_static(&mut self.scratch_buffers, &mut self.particles.boundary_particles);
             self.boundary_changed = false;
         }
 
-        self.particles.neighborhood.update_particle_neighbors(
+        self.particles.neighborhood.update_dynamic(
             &mut self.scratch_buffers,
             &mut self.particles.positions,
             &mut additional_particle_attributes_vector,

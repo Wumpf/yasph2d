@@ -18,45 +18,28 @@ fn bench_neighborhood_search(c: &mut Criterion) {
 
     let mut scratch_buffer_store = ScratchBufferStore::new();
     let mut searcher = NeighborhoodSearch::new(search_radius);
-    searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
+    searcher.update_dynamic(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
 
     c.bench_function(
         &format!(
-            "neighborhood_search.update (warm), {} positions, {} density, {} search_radius",
+            "neighborhood_search.update_dynamic (warm), {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
-        |b| b.iter(|| searcher.update_particle_neighbors(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[])),
+        |b| b.iter(|| searcher.update_dynamic(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[])),
     );
 
     c.bench_function(
         &format!(
-            "neighborhood_search.foreach_potential_neighbor, {} positions, {} density, {} search_radius",
+            "neighborhood_search iterating over neighbor_lists(), {} positions, {} density, {} search_radius",
             NUM_POSITIONS, DENSITY, search_radius
         ),
         |b| {
             let mut pindex = 0; // cycle through position for a more balanced result
             b.iter(|| {
                 let mut accum: Vector = Zero::zero();
-                searcher.foreach_potential_neighbor(positions[pindex], |i| {
+                for &i in searcher.neighbor_lists().neighbors_all(pindex) {
                     accum += positions[i as usize].to_vec();
-                });
-                pindex = (pindex + 1) % NUM_POSITIONS;
-                accum
-            })
-        },
-    );
-    c.bench_function(
-        &format!(
-            "neighborhood_search.foreach_neighbor, {} positions, {} density, {} search_radius",
-            NUM_POSITIONS, DENSITY, search_radius
-        ),
-        |b| {
-            let mut pindex = 0; // cycle through position for a more balanced result
-            b.iter(|| {
-                let mut accum: Vector = Zero::zero();
-                searcher.foreach_neighbor(pindex, |i| {
-                    accum += positions[i as usize].to_vec();
-                });
+                }
                 pindex = (pindex + 1) % NUM_POSITIONS as u32;
                 accum
             })
