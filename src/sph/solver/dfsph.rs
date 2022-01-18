@@ -77,27 +77,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let mut gradient_square_sum = 0.0;
                 let mut gradient_sum = Vector::zero();
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
-                        gradient_sum += grad_ij;
-                        gradient_square_sum += grad_ij.magnitude2();
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
-                        gradient_sum += grad_ij;
-                        gradient_square_sum += grad_ij.magnitude2();
-                    },
-                );
-
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
+                    gradient_sum += grad_ij;
+                    gradient_square_sum += grad_ij.magnitude2();
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    let grad_ij = kernel.gradient_from_positions(ri, pos_j) * particle_mass;
+                    gradient_sum += grad_ij;
+                    gradient_square_sum += grad_ij.magnitude2();
+                }
                 *alpha_value = 1.0 / (gradient_sum.magnitude2() + gradient_square_sum).max(EPSILON);
                 // todo?
             });
@@ -115,24 +106,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
             .for_each(|(i, (density_error_i, (&original_density, &pos_i, &velocity_vi)))| {
                 let mut delta = 0.0; // gradient to self is zero.
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let delta_v = velocity_vi - velocities[j as usize];
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        let delta_v = velocity_vi;
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let delta_v = velocity_vi - velocities[j as usize];
+                    delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    let delta_v = velocity_vi;
+                    delta += delta_v.dot(self.kernel.gradient_from_positions(pos_i, pos_j));
+                }
                 *density_error_i = original_density + delta * particle_mass * dt;
 
                 // ignore loss of density
@@ -162,24 +145,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 // collapsing deviation of dt² with multiply later -> divide delta with dt
 
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let kj = density_error[j as usize] * alpha_values[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        // compared to k values in paper already divided with density and multiplied with dt²!
-                        let pos_j = particles.boundary_particles[j as usize];
-                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let kj = density_error[j as usize] * alpha_values[j as usize];
+                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    // compared to k values in paper already divided with density and multiplied with dt²!
+                    let pos_j = particles.boundary_particles[j as usize];
+                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                }
 
                 *predicted_velocity -= inv_dt * delta * particle_mass;
             });
@@ -204,23 +179,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 // collapsing division of dt with multiply later -> nothing!
 
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let kj = self.warmstart_kappa[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let kj = self.warmstart_kappa[j as usize];
+                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                }
 
                 *predicted_velocity -= inv_dt * delta * particle_mass;
             });
@@ -298,24 +265,16 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 }
 
                 let mut delta = 0.0; // gradient to self is zero.
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let delta_v = velocity_vi - velocities[j as usize];
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        let delta_v = velocity_vi;
-                        delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let delta_v = velocity_vi - velocities[j as usize];
+                    delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    let delta_v = velocity_vi;
+                    delta += delta_v.dot(self.kernel.gradient_from_positions(ri, pos_j));
+                }
                 *density_change_i = delta * particle_mass;
                 *density_change_i = density_change_i.max(0.0); // clamp density loss
             });
@@ -342,23 +301,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 // collapsing division of dt with multiply later -> nothing!
 
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let kj = density_change[j as usize] * alpha_values[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let kj = density_change[j as usize] * alpha_values[j as usize];
+                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                }
 
                 *predicted_velocity -= delta * particle_mass;
             });
@@ -382,23 +333,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 // collapsing division of dt with multiply later -> nothing!
 
                 let i = i as u32;
-                particles.foreach_neighbor_particle(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.positions[j as usize];
-                        let kj = self.warmstart_stiffness[j as usize];
-                        delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
-                particles.foreach_neighbor_particle_boundary(
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let pos_j = particles.boundary_particles[j as usize];
-                        delta += ki * kernel.gradient_from_positions(ri, pos_j);
-                    },
-                );
+                for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                    let pos_j = particles.positions[j as usize];
+                    let kj = self.warmstart_stiffness[j as usize];
+                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                }
+                for &j in particles.neighbor_lists().neighbors_static(i as u32) {
+                    let pos_j = particles.boundary_particles[j as usize];
+                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                }
 
                 *predicted_velocity -= delta * particle_mass;
             });
@@ -515,22 +458,18 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                         *a = non_pressure_accelleration;
 
                         // viscosity
-                        particles.foreach_neighbor_particle(
-                            i as u32,
-                            #[inline(always)]
-                            |j| {
-                                let j = j as usize;
-                                let r_sq = ri.distance2(particles.positions[j]);
-                                *a += viscosity_model.compute_viscous_accelleration(
-                                    dt,
-                                    r_sq,
-                                    r_sq.sqrt(),
-                                    particle_mass,
-                                    particles.densities[j],
-                                    particles.velocities[j] - vi,
-                                );
-                            },
-                        );
+                        for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
+                            let j = j as usize;
+                            let r_sq = ri.distance2(particles.positions[j]);
+                            *a += viscosity_model.compute_viscous_accelleration(
+                                dt,
+                                r_sq,
+                                r_sq.sqrt(),
+                                particle_mass,
+                                particles.densities[j],
+                                particles.velocities[j] - vi,
+                            );
+                        }
                     });
             }
 

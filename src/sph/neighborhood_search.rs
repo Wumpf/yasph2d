@@ -273,9 +273,9 @@ struct NeighborRange {
 }
 
 impl NeighborRange {
-    fn range_total(&self) -> Range<usize> {
-        (self.start_index as usize)..(self.start_index + self.count_total as u32) as usize
-    }
+    // fn range_total(&self) -> Range<usize> {
+    //     (self.start_index as usize)..(self.start_index + self.count_total as u32) as usize
+    // }
 
     fn range_dynamic(&self) -> Range<usize> {
         (self.start_index as usize)..(self.start_index + self.count_dynamic as u32) as usize
@@ -420,12 +420,13 @@ impl NeighborLists {
         }
     }
 
-    pub fn neighbors_all<'a>(&'a self, particle: ParticleIndex) -> &[u32] {
-        unsafe {
-            let range = (*self.neighborhood_list_ranges.list.get()).get_unchecked(particle as usize);
-            self.neighborhood_lists.as_slice().get_unchecked(range.range_total())
-        }
-    }
+    // Doesn't work out because boundary positions are in a separate buffer
+    // pub fn neighbors_all<'a>(&'a self, particle: ParticleIndex) -> &[u32] {
+    //     unsafe {
+    //         let range = (*self.neighborhood_list_ranges.list.get()).get_unchecked(particle as usize);
+    //         self.neighborhood_lists.as_slice().get_unchecked(range.range_total())
+    //     }
+    // }
 
     pub fn neighbors_dynamic<'a>(&'a self, particle: ParticleIndex) -> &'a [u32] {
         unsafe {
@@ -512,6 +513,7 @@ impl NeighborhoodSearch {
         );
     }
 
+    #[inline(always)]
     pub fn neighbor_lists(&self) -> &NeighborLists {
         &self.neighbor_lists
     }
@@ -538,7 +540,7 @@ mod tests {
         searcher.update_dynamic(&mut scratch_buffer_store, &mut positions, &mut [], &mut [], &[]);
 
         for (particle, &search_pos) in positions.iter().enumerate() {
-            let neighbors = searcher.neighbor_lists().neighbors_all(particle as u32).to_vec();
+            let neighbors = searcher.neighbor_lists().neighbors_dynamic(particle as u32).to_vec();
 
             // validate
             let mut neighbors_bruteforce = Vec::new();

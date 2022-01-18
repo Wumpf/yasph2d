@@ -4,7 +4,7 @@ use ggez::graphics::Rect;
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use super::neighborhood_search::{NeighborhoodSearch, ParticleIndex};
+use super::neighborhood_search::{NeighborLists, NeighborhoodSearch, ParticleIndex};
 use super::scratch_buffer::ScratchBufferStore;
 use super::smoothing_kernel::Kernel;
 
@@ -24,27 +24,8 @@ pub struct Particles {
 
 impl Particles {
     #[inline(always)]
-    pub(super) fn foreach_neighbor_particle(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
-        Self::foreach_neighbor_particle_internal(&self.neighborhood, pidx, f)
-    }
-    #[inline]
-    fn foreach_neighbor_particle_internal(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
-        // TODO: Expose the new slice
-        for &i in neighborhood.neighbor_lists().neighbors_dynamic(pidx) {
-            f(i);
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn foreach_neighbor_particle_boundary(&self, pidx: ParticleIndex, f: impl FnMut(ParticleIndex)) {
-        Self::foreach_neighbor_particle_internal_boundary_new(&self.neighborhood, pidx, f)
-    }
-    #[inline]
-    fn foreach_neighbor_particle_internal_boundary_new(neighborhood: &NeighborhoodSearch, pidx: ParticleIndex, mut f: impl FnMut(ParticleIndex)) {
-        // TODO: Expose the new slice
-        for &i in neighborhood.neighbor_lists().neighbors_static(pidx) {
-            f(i);
-        }
+    pub fn neighbor_lists(&self) -> &NeighborLists {
+        self.neighborhood.neighbor_lists()
     }
 
     // Can be useful to determine particle deficiency. Not used right now.
@@ -230,26 +211,17 @@ impl FluidParticleWorld {
             .for_each(|(i, (density, ri))| {
                 *density = kernel.evaluate(0.0, 0.0) * mass; // self-contribution
                 let i = i as u32;
-                Particles::foreach_neighbor_particle_internal(
-                    neighborhood,
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let r_sq = ri.distance2(unsafe { *positions.get_unchecked(j as usize) });
-                        let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                        *density += density_contribution;
-                    },
-                );
-                Particles::foreach_neighbor_particle_internal_boundary_new(
-                    neighborhood,
-                    i,
-                    #[inline(always)]
-                    |j| {
-                        let r_sq = ri.distance2(unsafe { *boundary_positions.get_unchecked(j as usize) });
-                        let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
-                        *density += density_contribution;
-                    },
-                );
+
+                for &j in neighborhood.neighbor_lists().neighbors_dynamic(i) {
+                    let r_sq = ri.distance2(unsafe { *positions.get_unchecked(j as usize) });
+                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                    *density += density_contribution;
+                }
+                for &j in neighborhood.neighbor_lists().neighbors_static(i) {
+                    let r_sq = ri.distance2(unsafe { *boundary_positions.get_unchecked(j as usize) });
+                    let density_contribution = kernel.evaluate(r_sq, r_sq.sqrt()) * mass;
+                    *density += density_contribution;
+                }
 
                 // Pressure clamping to work around particle deficiency problem. Good explanation here:
                 // https://github.com/InteractiveComputerGraphics/SPlisHSPlasH/issues/36#issuecomment-495883932
