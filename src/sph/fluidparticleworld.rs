@@ -193,7 +193,7 @@ impl FluidParticleWorld {
         self.boundary_changed = true;
     }
 
-    pub(super) fn update_densities(&mut self, kernel: impl Kernel + std::marker::Sync) {
+    pub fn update_densities(&mut self, kernel: impl Kernel + std::marker::Sync) {
         microprofile::scope!("FluidParticleWorld", "update_densities");
         assert_eq!(self.particles.positions.len(), self.particles.densities.len());
 
@@ -231,7 +231,7 @@ impl FluidParticleWorld {
 
     // sorts particle attributes internally!
     // TODO: put on particles struct
-    pub(super) fn update_neighborhood_datastructure<'a>(
+    pub fn update_neighborhood_datastructure<'a>(
         &'a mut self,
         additional_particle_attributes_vector: Vec<&'a mut Vec<Vector>>,
         additional_particle_attributes_real: Vec<&'a mut Vec<Real>>,
