@@ -330,6 +330,8 @@ impl NeighborLists {
         self.neighborhood_lists.resize(positions_dynamic.len() * MAX_NUM_NEIGHBORS as usize); // TODO: Smaller? Needs we need to handle error on overflow.
         let radius_sq = grid.radius * grid.radius;
 
+        let neighborhood_list_ranges = &self.neighborhood_list_ranges;
+
         // Look at cell pairs in the compact cell grid since next cell tells us how many particles are in the current.
         // Going by cells instead of particles allows us to query neighbor cells / runs of neighbor particles only once
         cellgrid_dynamic.cells.par_windows(2).for_each(|cell_slice| {
@@ -386,7 +388,7 @@ impl NeighborLists {
                     count_total,
                 };
                 unsafe {
-                    *(&mut *self.neighborhood_list_ranges.list.get()).get_unchecked_mut(i as usize) = neighbor_range;
+                    *(&mut *neighborhood_list_ranges.list.get()).get_unchecked_mut(i as usize) = neighbor_range;
                 }
             }
         });

@@ -128,13 +128,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let inv_dt = 1.0 / dt;
-        let kernel = &self.kernel;
-        let alpha_values = &self.alpha_values;
 
         velocities
             .par_iter_mut()
             .zip(self.warmstart_kappa.par_iter_mut())
-            .zip((&fluid_world.particles.positions, density_error, alpha_values).into_par_iter())
+            .zip((&fluid_world.particles.positions, density_error, &self.alpha_values).into_par_iter())
             .enumerate()
             .for_each(|(i, ((predicted_velocity, warmstart_kappa_i), (&ri, density_error_i, alpha_i)))| {
                 let mut delta: Vector = Zero::zero(); // gradient to self is zero.
@@ -147,13 +145,13 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let i = i as u32;
                 for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
                     let pos_j = particles.positions[j as usize];
-                    let kj = density_error[j as usize] * alpha_values[j as usize];
-                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    let kj = density_error[j as usize] * self.alpha_values[j as usize];
+                    delta += (ki + kj) * self.kernel.gradient_from_positions(ri, pos_j);
                 }
                 for &j in particles.neighbor_lists().neighbors_static(i as u32) {
                     // compared to k values in paper already divided with density and multiplied with dt²!
                     let pos_j = particles.boundary_particles[j as usize];
-                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    delta += ki * self.kernel.gradient_from_positions(ri, pos_j);
                 }
 
                 *predicted_velocity -= inv_dt * delta * particle_mass;
@@ -165,7 +163,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
         let inv_dt = 1.0 / dt;
-        let kernel = &self.kernel;
 
         velocities
             .par_iter_mut()
@@ -182,11 +179,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
                     let pos_j = particles.positions[j as usize];
                     let kj = self.warmstart_kappa[j as usize];
-                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    delta += (ki + kj) * self.kernel.gradient_from_positions(ri, pos_j);
                 }
                 for &j in particles.neighbor_lists().neighbors_static(i as u32) {
                     let pos_j = particles.boundary_particles[j as usize];
-                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    delta += ki * self.kernel.gradient_from_positions(ri, pos_j);
                 }
 
                 *predicted_velocity -= inv_dt * delta * particle_mass;
@@ -284,7 +281,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         microprofile::scope!("DFSPHSolver", "correct_velocity_with_divergence_error");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
-        let kernel = &self.kernel;
         let alpha_values = &self.alpha_values;
 
         velocities
@@ -304,11 +300,11 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
                     let pos_j = particles.positions[j as usize];
                     let kj = density_change[j as usize] * alpha_values[j as usize];
-                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    delta += (ki + kj) * self.kernel.gradient_from_positions(ri, pos_j);
                 }
                 for &j in particles.neighbor_lists().neighbors_static(i as u32) {
                     let pos_j = particles.boundary_particles[j as usize];
-                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    delta += ki * self.kernel.gradient_from_positions(ri, pos_j);
                 }
 
                 *predicted_velocity -= delta * particle_mass;
@@ -319,7 +315,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         microprofile::scope!("DFSPHSolver", "correct_divergence_error_warmstart");
         let particle_mass = fluid_world.properties.particle_mass();
         let particles = &fluid_world.particles;
-        let kernel = &self.kernel;
 
         velocities
             .par_iter_mut()
@@ -331,16 +326,15 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
                 let ki = *warmstart_stiffness_i;
 
                 // collapsing division of dt with multiply later -> nothing!
-
                 let i = i as u32;
                 for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
                     let pos_j = particles.positions[j as usize];
                     let kj = self.warmstart_stiffness[j as usize];
-                    delta += (ki + kj) * kernel.gradient_from_positions(ri, pos_j);
+                    delta += (ki + kj) * self.kernel.gradient_from_positions(ri, pos_j);
                 }
                 for &j in particles.neighbor_lists().neighbors_static(i as u32) {
                     let pos_j = particles.boundary_particles[j as usize];
-                    delta += ki * kernel.gradient_from_positions(ri, pos_j);
+                    delta += ki * self.kernel.gradient_from_positions(ri, pos_j);
                 }
 
                 *predicted_velocity -= delta * particle_mass;
@@ -447,7 +441,6 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                 let particle_mass = fluid_world.properties.particle_mass();
                 let non_pressure_accelleration = non_pressure_forces / particle_mass;
                 let particles = &fluid_world.particles;
-                let viscosity_model = &self.viscosity_model;
                 accellerations
                     .buffer
                     .par_iter_mut()
@@ -461,7 +454,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> Solver for DFSPHSolver
                         for &j in particles.neighbor_lists().neighbors_dynamic(i as u32) {
                             let j = j as usize;
                             let r_sq = ri.distance2(particles.positions[j]);
-                            *a += viscosity_model.compute_viscous_accelleration(
+                            *a += self.viscosity_model.compute_viscous_accelleration(
                                 dt,
                                 r_sq,
                                 r_sq.sqrt(),
