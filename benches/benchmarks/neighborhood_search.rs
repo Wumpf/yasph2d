@@ -37,7 +37,7 @@ fn bench_neighborhood_search(c: &mut Criterion) {
             let mut pindex = 0; // cycle through position for a more balanced result
             b.iter(|| {
                 let mut accum: Vector = Zero::zero();
-                for &i in searcher.neighbor_lists().neighbors_all(pindex) {
+                for &i in searcher.neighbor_lists().neighbors_dynamic(pindex) {
                     accum += positions[i as usize].to_vec();
                 }
                 pindex = (pindex + 1) % NUM_POSITIONS as u32;
