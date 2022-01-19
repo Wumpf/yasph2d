@@ -19,7 +19,7 @@ microprofile = { git = "https://github.com/jonasmr/microprofile-rust.git", rev="
 
 [dev-dependencies]
 more-asserts = "0.2.2"
-criterion = "0.3.5"
+criterion = { version = "0.3.5", features = ["html_reports"] }
 
 [[bench]]
 name = "bench_main"
