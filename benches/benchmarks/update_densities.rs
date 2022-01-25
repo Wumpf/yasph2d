@@ -4,7 +4,7 @@ use ggez::graphics::Rect;
 use yasph2d::{
     sph::{
         self,
-        smoothing_kernel::{CubicSpline, Poly6},
+        smoothing_kernel::{CubicSpline, Poly6, WendlandQuinticC2},
     },
     units::*,
 };
@@ -40,6 +40,7 @@ pub struct FakeLookupTableKernel {
     smoothing_length_inv: Real,
 }
 impl FakeLookupTableKernel {
+    #[allow(dead_code)]
     fn new(smoothing_length: Real) -> Self {
         FakeLookupTableKernel {
             values: [0.123; FAKE_LOOKUP_TABLE_KERNEL_RESOLUTION],
@@ -98,20 +99,30 @@ fn bench_update_densities(c: &mut Criterion) {
         |b| b.iter(|| fluid_world.update_densities(kernel)),
     );
 
-    let kernel = black_box(NoOpKernel {});
-    c.bench_function(
-        &format!(
-            "bench_update_densities(NoOpKernel) - FluidParticleWorld with {} fluid particles and {} boundary particles",
-            fluid_world.particles.num_dynamic_particles(),
-            fluid_world.particles.num_boundary_particles()
-        ),
-        |b| b.iter(|| fluid_world.update_densities(kernel)),
-    );
+    // let kernel = black_box(NoOpKernel {});
+    // c.bench_function(
+    //     &format!(
+    //         "bench_update_densities(NoOpKernel) - FluidParticleWorld with {} fluid particles and {} boundary particles",
+    //         fluid_world.particles.num_dynamic_particles(),
+    //         fluid_world.particles.num_boundary_particles()
+    //     ),
+    //     |b| b.iter(|| fluid_world.update_densities(kernel)),
+    // );
 
-    let kernel = black_box(FakeLookupTableKernel::new(fluid_world.properties.smoothing_length()));
+    // let kernel = black_box(FakeLookupTableKernel::new(fluid_world.properties.smoothing_length()));
+    // c.bench_function(
+    //     &format!(
+    //         "bench_update_densities(FakeLookupTableKernel) - FluidParticleWorld with {} fluid particles and {} boundary particles",
+    //         fluid_world.particles.num_dynamic_particles(),
+    //         fluid_world.particles.num_boundary_particles()
+    //     ),
+    //     |b| b.iter(|| fluid_world.update_densities(kernel)),
+    // );
+
+    let kernel = black_box(WendlandQuinticC2::new(fluid_world.properties.smoothing_length()));
     c.bench_function(
         &format!(
-            "bench_update_densities(FakeLookupTableKernel) - FluidParticleWorld with {} fluid particles and {} boundary particles",
+            "bench_update_densities(WendlandQuinticC2) - FluidParticleWorld with {} fluid particles and {} boundary particles",
             fluid_world.particles.num_dynamic_particles(),
             fluid_world.particles.num_boundary_particles()
         ),

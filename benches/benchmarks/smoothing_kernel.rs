@@ -29,6 +29,10 @@ fn bench_kernels(c: &mut Criterion) {
             let kernel = black_box(Spiky::new(smoothing_length));
             group_eval.bench_function("Spiky.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
         }
+        {
+            let kernel = black_box(WendlandQuinticC2::new(smoothing_length));
+            group_eval.bench_function("WendlandQuinticC2.evaluate", |b| b.iter(|| kernel.evaluate(r_sq, r)));
+        }
         group_eval.finish();
     }
     {
@@ -44,6 +48,10 @@ fn bench_kernels(c: &mut Criterion) {
         {
             let kernel = black_box(Spiky::new(smoothing_length));
             group_grad.bench_function("Spiky.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
+        }
+        {
+            let kernel = black_box(Spiky::new(smoothing_length));
+            group_grad.bench_function("WendlandQuinticC2.gradient", |b| b.iter(|| kernel.gradient(ri_to_rj, r_sq, r)));
         }
         group_grad.finish();
     }
