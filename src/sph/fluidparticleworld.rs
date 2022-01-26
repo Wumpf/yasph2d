@@ -139,7 +139,8 @@ impl FluidParticleWorld {
     /// - `jitter`: Amount of jitter. 0 for perfect lattice. >1 and particles are no longer in a strict lattice.
     pub fn add_fluid_rect(&mut self, fluid_rect: &Rect, jitter_amount: Real) {
         // fluid_rect.w * fluid_rect.h / self.particle_density, but discretized per axis
-        let num_particles_per_meter = self.properties.num_particles_per_meter();
+        // go with a slightly smaller density to prevent (explosion) issues on startup. Seems to be most pronounced with WendlandQuinticC2 (but not exclusive)
+        let num_particles_per_meter = self.properties.num_particles_per_meter() * 0.9;
         let num_particles_x = std::cmp::max(1, (fluid_rect.w as Real * num_particles_per_meter) as usize);
         let num_particles_y = std::cmp::max(1, (fluid_rect.h as Real * num_particles_per_meter) as usize);
         let num_particles = num_particles_x * num_particles_y;

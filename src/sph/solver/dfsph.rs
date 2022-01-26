@@ -8,13 +8,15 @@ use crate::units::*;
 use cgmath::prelude::*;
 use rayon::prelude::*;
 
+type KernelFunction = smoothing_kernel::WendlandQuinticC2;
+
 // DFSPH implementation as described in
 // Divergence-Free SPH for Incompressible and Viscious Fluids
 // https://animation.rwth-aachen.de/publication/051/
 pub struct DFSPHSolver<TViscosityModel: ViscosityModel> {
     viscosity_model: TViscosityModel,
 
-    kernel: smoothing_kernel::CubicSpline,
+    kernel: KernelFunction,
 
     // Max density error. In relative density deviation per second - 0.01 means 1% density deviation per second.
     max_avg_density_error: Real,
@@ -42,7 +44,7 @@ impl<TViscosityModel: ViscosityModel + std::marker::Sync> DFSPHSolver<TViscosity
         DFSPHSolver {
             viscosity_model,
 
-            kernel: smoothing_kernel::CubicSpline::new(smoothing_length),
+            kernel: KernelFunction::new(smoothing_length),
 
             max_avg_density_error: 0.01 / 100.0, // 0.1% deviation per second.
             max_num_density_correction_iterations: 200,
