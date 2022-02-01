@@ -24,7 +24,7 @@ impl WendlandQuinticC2 {
         WendlandQuinticC2 {
             h_inv: 1.0 / smoothing_length,
             normalizer: 4.0 * 7.0 / (std::f64::consts::PI as Real * smoothing_length.powi(2)),
-            normalizer_grad: 140.0 / (std::f64::consts::PI as Real * smoothing_length.powi(2)),
+            normalizer_grad: 140.0 / (std::f64::consts::PI as Real * smoothing_length.powi(4)),
         }
     }
 }
@@ -41,9 +41,8 @@ impl Kernel for WendlandQuinticC2 {
     #[inline]
     fn gradient(&self, ri_to_rj: Vector, _r_sq: Real, r: Real) -> Vector {
         let q = (r * self.h_inv).min(1.0);
-        let gradq = ri_to_rj * (self.h_inv / r);
         let one_minus_q = 1.0 - q;
-        (self.normalizer_grad * q * one_minus_q * one_minus_q * one_minus_q) * gradq
+        (self.normalizer_grad * one_minus_q * one_minus_q * one_minus_q) * ri_to_rj
     }
 
     #[inline]
